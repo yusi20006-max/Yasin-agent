@@ -6,6 +6,7 @@ tool runner, agent registry.
 اجرا با: pytest tests/test_agent_platform.py -v
 """
 
+import sys
 import pytest
 
 from agent_platform.agent_registry import AgentConfig, AgentNotFoundError, AgentRegistry
@@ -238,3 +239,176 @@ def test_run_agent_end_to_end():
 
     assert result.success is True
     assert result.output == "translated(raw-news)"
+
+
+# ---------------------------------------------------------------------------
+# Platform Integration and Default Registries
+# ---------------------------------------------------------------------------
+
+def test_build_default_registries():
+    from agent_platform.cli import build_default_registries, run_agent
+
+    agent_registry, planner, tool_runner = build_default_registries()
+
+    # Check tool runner tools
+    assert "fetch_news" in tool_runner.list_tools()
+    assert "check_content" in tool_runner.list_tools()
+    assert "translate" in tool_runner.list_tools()
+    assert "summarize" in tool_runner.list_tools()
+    assert "publish" in tool_runner.list_tools()
+
+    # Check news_bot configured correctly
+    config = agent_registry.get("news_bot")
+    assert config.goal == "news_flow"
+
+    # Run default news_bot end to end
+    result = run_agent("news_bot", agent_registry, planner, tool_runner)
+    assert result.success is True
+    # Default output format checks
+    assert "خبر خام از منبع main_feed" in result.output
+    assert "ترجمه‌شده به fa" in result.output
+    assert "خلاصه" in result.output
+    assert "انتشاریافته" in result.output
+
+
+def test_check_content_unhappy_path():
+    from agent_platform.cli import build_default_registries, run_agent
+
+    agent_registry, planner, tool_runner = build_default_registries()
+
+    # Let's override the fetch_news tool to return a news containing "spam" (unsafe)
+    tool_runner.register(
+        "fetch_news",
+        lambda context, previous_output=None, **_: "This is spam news!",
+        overwrite=True
+    )
+
+    result = run_agent("news_bot", agent_registry, planner, tool_runner)
+    assert result.success is False
+    assert "ناامن" in result.error
+
+
+# ---------------------------------------------------------------------------
+# CLI Command Registration and Standalone Runner
+# ---------------------------------------------------------------------------
+
+def test_cli_registration_argparse():
+    import argparse
+    from agent_platform.cli import register_cli_command
+
+    parser = argparse.ArgumentParser()
+    # Check registering command on empty parser
+    register_cli_command(parser)
+
+    # Parse mock 'agent run news_bot' arguments
+    args = parser.parse_args(["agent", "run", "news_bot"])
+    assert args.command == "agent"
+    assert args.agent_command == "run"
+    assert args.agent_name == "news_bot"
+
+
+def test_cli_registration_click(monkeypatch):
+    import sys
+    from types import ModuleType
+
+    # Create a mock click module
+    mock_click = ModuleType("click")
+    mock_click.argument = lambda *args, **kwargs: (lambda f: f)
+    mock_click.echo = lambda *args, **kwargs: None
+    mock_click.Group = type("Group", (), {})
+
+    # Inject mock click to sys.modules
+    sys.modules["click"] = mock_click
+
+    # Reload/Re-import register_cli_command to ensure it picks up mock click
+    if "agent_platform.cli" in sys.modules:
+        del sys.modules["agent_platform.cli"]
+
+    from agent_platform.cli import register_cli_command
+
+    class MockClickCommand:
+        def __init__(self, name, callback=None):
+            self.name = name
+            self.callback = callback
+            self.params = []
+
+    class MockClickGroup:
+        def __init__(self):
+            self.commands = {}
+
+        def group(self, name):
+            def decorator(func):
+                subgroup = MockClickGroup()
+                self.commands[name] = subgroup
+                return subgroup
+            return decorator
+
+        def command(self, name):
+            def decorator(func):
+                cmd = MockClickCommand(name, func)
+                self.commands[name] = cmd
+                return func
+            return decorator
+
+    group = MockClickGroup()
+
+    try:
+        register_cli_command(group)
+        assert "agent" in group.commands
+        agent_group = group.commands["agent"]
+        assert "run" in agent_group.commands
+
+        run_cmd = agent_group.commands["run"]
+        # Trigger callback with a dummy agent
+        run_cmd.callback("news_bot")
+    finally:
+        # Clean up mock click completely so other tests aren't affected
+        sys.modules.pop("click", None)
+        if "agent_platform.cli" in sys.modules:
+            del sys.modules["agent_platform.cli"]
+
+
+def test_cli_main_run_success(monkeypatch, capsys):
+    import sys
+    from agent_platform.cli import main
+
+    # Mock CLI arguments to run news_bot
+    monkeypatch.setattr(sys, "argv", ["yasin", "agent", "run", "news_bot"])
+
+    # Capture exit code and output
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "در حال اجرای ایجنت: news_bot..." in captured.out
+    assert "مرحله 'fetch_news': موفق" in captured.out
+    assert "ای‌جنت با موفقیت پایان یافت." in captured.out
+
+
+def test_cli_main_run_failure(monkeypatch, capsys):
+    import sys
+    from agent_platform.cli import main
+
+    # Mock CLI arguments to run a non-existent agent
+    monkeypatch.setattr(sys, "argv", ["yasin", "agent", "run", "unknown_bot"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "در حال اجرای ایجنت: unknown_bot..." in captured.out
+    assert "خطای غیرمنتظره" in captured.out or "پیدا نشد" in captured.out
+
+
+def test_cli_main_help_output(monkeypatch, capsys):
+    import sys
+    from agent_platform.cli import main
+
+    # Mock empty args to trigger help
+    monkeypatch.setattr(sys, "argv", ["yasin"])
+
+    main()
+    captured = capsys.readouterr()
+    assert "Yasin Agent CLI" in captured.out
