@@ -412,3 +412,145 @@ def test_cli_main_help_output(monkeypatch, capsys):
     main()
     captured = capsys.readouterr()
     assert "Yasin Agent CLI" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Agent Definition Layer (v0.2) Tests
+# ---------------------------------------------------------------------------
+
+def test_agent_metadata():
+    from agent_platform import AgentMetadata
+    meta = AgentMetadata(version="2.0.0", author="Test Author", description="Desc", tags=["test"], custom_metadata={"key": "val"})
+    assert meta.version == "2.0.0"
+    assert meta.author == "Test Author"
+    assert meta.description == "Desc"
+    assert "test" in meta.tags
+    assert meta.custom_metadata["key"] == "val"
+
+
+def test_agent_configuration():
+    from agent_platform import AgentConfiguration
+    cfg = AgentConfiguration(model="gpt-4o", temperature=0.2, max_tokens=100, top_p=0.9, timeout=15.0, extra_config={"stream": True})
+    assert cfg.model == "gpt-4o"
+    assert cfg.temperature == 0.2
+    assert cfg.max_tokens == 100
+    assert cfg.top_p == 0.9
+    assert cfg.timeout == 15.0
+    assert cfg.extra_config["stream"] is True
+
+
+def test_agent_profile():
+    from agent_platform import AgentProfile
+    prof = AgentProfile(role="Translator", backstory="Farsi native", tone="formal", instructions=["translate", "do not add notes"])
+    assert prof.role == "Translator"
+    assert prof.backstory == "Farsi native"
+    assert prof.tone == "formal"
+    assert "translate" in prof.instructions
+
+
+def test_prompt_handler_default_rendering():
+    from agent_platform import AgentProfile, PromptHandler
+    prof = AgentProfile(role="Expert", backstory="Experienced", tone="friendly", instructions=["be kind", "stay brief"])
+    handler = PromptHandler()
+    rendered = handler.render_system_prompt(prof)
+    assert "Expert" in rendered
+    assert "Experienced" in rendered
+    assert "friendly" in rendered
+    assert "- be kind" in rendered
+    assert "- stay brief" in rendered
+
+
+def test_prompt_handler_custom_and_safe_format():
+    from agent_platform import AgentProfile, PromptHandler
+    handler = PromptHandler(
+        system_prompt_template="Role: {role}, Unknown: {unknown_placeholder}",
+        user_prompt_template="Input is {input_data}, Extra: {extra_placeholder}",
+        custom_templates={"my_temp": "Custom {arg}"}
+    )
+    prof = AgentProfile(role="Coder")
+    # Rendering should format known variables and leave unknown placeholder untouched without throwing KeyError
+    rendered_sys = handler.render_system_prompt(prof)
+    assert "Role: Coder" in rendered_sys
+    assert "{unknown_placeholder}" in rendered_sys
+
+    rendered_user = handler.render_user_prompt("test-input")
+    assert "Input is test-input" in rendered_user
+    assert "{extra_placeholder}" in rendered_user
+
+    rendered_custom = handler.render_custom_prompt("my_temp", arg="value")
+    assert rendered_custom == "Custom value"
+
+    with pytest.raises(ValueError):
+        handler.render_custom_prompt("non_existent")
+
+
+def test_agent_definition_creation():
+    from agent_platform import (
+        AgentDefinition, AgentMetadata, AgentConfiguration, AgentProfile, PromptHandler
+    )
+    metadata = AgentMetadata(version="1.1.0")
+    config = AgentConfiguration(model="claude-3")
+    profile = AgentProfile(role="Researcher")
+    prompt_handler = PromptHandler()
+
+    definition = AgentDefinition(
+        name="researcher_bot",
+        goal="search_and_summarize",
+        metadata=metadata,
+        config=config,
+        profile=profile,
+        prompt_handler=prompt_handler
+    )
+
+    assert definition.name == "researcher_bot"
+    assert definition.goal == "search_and_summarize"
+    assert definition.metadata.version == "1.1.0"
+    assert definition.config.model == "claude-3"
+    assert definition.profile.role == "Researcher"
+
+
+def test_agent_registry_from_dict_definition():
+    from agent_platform import AgentRegistry, AgentDefinition
+    data = {
+        "advanced_bot": {
+            "goal": "advanced_flow",
+            "description": "An advanced bot definition",
+            "metadata": {
+                "version": "1.5.0",
+                "author": "Yasin Team"
+            },
+            "config": {
+                "model": "gpt-4-turbo",
+                "temperature": 0.5
+            },
+            "profile": {
+                "role": "Moderator",
+                "instructions": ["check toxicity", "ban spammers"]
+            },
+            "prompt_handler": {
+                "system_prompt_template": "Mode: {role}"
+            }
+        },
+        "basic_bot": {
+            "goal": "basic_flow",
+            "description": "A basic bot"
+        }
+    }
+
+    registry = AgentRegistry.from_dict(data)
+    assert "advanced_bot" in registry.list_agents()
+    assert "basic_bot" in registry.list_agents()
+
+    adv_cfg = registry.get("advanced_bot")
+    assert isinstance(adv_cfg, AgentDefinition)
+    assert adv_cfg.metadata.version == "1.5.0"
+    assert adv_cfg.metadata.author == "Yasin Team"
+    assert adv_cfg.config.model == "gpt-4-turbo"
+    assert adv_cfg.config.temperature == 0.5
+    assert adv_cfg.profile.role == "Moderator"
+    assert "check toxicity" in adv_cfg.profile.instructions
+    assert adv_cfg.prompt_handler.system_prompt_template == "Mode: {role}"
+
+    basic_cfg = registry.get("basic_bot")
+    assert not isinstance(basic_cfg, AgentDefinition)
+    assert basic_cfg.goal == "basic_flow"

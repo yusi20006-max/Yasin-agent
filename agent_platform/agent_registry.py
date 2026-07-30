@@ -27,7 +27,7 @@ class AgentNotFoundError(Exception):
 
 
 class AgentRegistry:
-    """رجیستری ساده‌ی نام -> AgentConfig."""
+    """رجیستری ساده‌ی نام -> AgentConfig یا AgentDefinition."""
 
     def __init__(self) -> None:
         self._agents: Dict[str, AgentConfig] = {}
@@ -55,12 +55,68 @@ class AgentRegistry:
         """
         registry = cls()
         for name, cfg in data.items():
-            registry.register(
-                AgentConfig(
+            # پشتیبانی از ساختارهای پیشرفته‌ی تعریف ایجنت (Agent Definition Layer)
+            if any(k in cfg for k in ("metadata", "config", "profile", "prompt_handler")):
+                from agent_platform.agent_definition import (
+                    AgentDefinition,
+                    AgentMetadata,
+                    AgentConfiguration,
+                    AgentProfile,
+                    PromptHandler,
+                )
+
+                meta_data = cfg.get("metadata", {})
+                metadata = AgentMetadata(
+                    version=meta_data.get("version", "1.0.0"),
+                    author=meta_data.get("author", "Yasin-Agent Developer"),
+                    description=meta_data.get("description", cfg.get("description", "")),
+                    tags=meta_data.get("tags", []),
+                    custom_metadata=meta_data.get("custom_metadata", {}),
+                )
+
+                conf_data = cfg.get("config", {})
+                config = AgentConfiguration(
+                    model=conf_data.get("model", "default-model"),
+                    temperature=conf_data.get("temperature", 0.7),
+                    max_tokens=conf_data.get("max_tokens", 2048),
+                    top_p=conf_data.get("top_p", 1.0),
+                    timeout=conf_data.get("timeout", 30.0),
+                    extra_config=conf_data.get("extra_config", {}),
+                )
+
+                prof_data = cfg.get("profile", {})
+                profile = AgentProfile(
+                    role=prof_data.get("role", ""),
+                    backstory=prof_data.get("backstory", ""),
+                    tone=prof_data.get("tone", "neutral"),
+                    instructions=prof_data.get("instructions", []),
+                )
+
+                prompt_data = cfg.get("prompt_handler", {})
+                prompt_handler = PromptHandler(
+                    system_prompt_template=prompt_data.get("system_prompt_template"),
+                    user_prompt_template=prompt_data.get("user_prompt_template"),
+                    custom_templates=prompt_data.get("custom_templates"),
+                )
+
+                definition = AgentDefinition(
                     name=name,
                     goal=cfg["goal"],
                     description=cfg.get("description", ""),
                     default_context=cfg.get("default_context", {}),
+                    metadata=metadata,
+                    config=config,
+                    profile=profile,
+                    prompt_handler=prompt_handler,
                 )
-            )
+                registry.register(definition)
+            else:
+                registry.register(
+                    AgentConfig(
+                        name=name,
+                        goal=cfg["goal"],
+                        description=cfg.get("description", ""),
+                        default_context=cfg.get("default_context", {}),
+                    )
+                )
         return registry

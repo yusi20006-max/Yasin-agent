@@ -135,3 +135,73 @@ def test_memory_and_context_handling():
     agent = client.get_agent("mem_agent")
     assert agent is not None
     # We can fetch the agent's core context or see the logs, but everything passed successfully.
+
+
+def test_agent_definition_integration_with_yasin_core():
+    # 1. Setup tool runner with tools that inspect the agent definition variables in context
+    tool_runner = ToolRunner()
+
+    def inspect_context_tool(context, previous_output=None, **_):
+        ctx = get_current_context()
+
+        # Verify prompts and profiles are injected correctly in the active context
+        system_prompt = ctx.get("system_prompt")
+        user_prompt = ctx.get("user_prompt")
+        profile = ctx.get("agent_profile")
+        metadata = ctx.get("agent_metadata")
+        config = ctx.get("agent_config")
+
+        assert "You are Assistant Chef" in system_prompt
+        assert profile["role"] == "Assistant Chef"
+        assert profile["tone"] == "polite"
+        assert "cook safely" in profile["instructions"]
+        assert metadata["version"] == "2.3.1"
+        assert config["model"] == "gpt-4-pro"
+        assert config["temperature"] == 0.4
+
+        return "inspection-passed"
+
+    tool_runner.register("inspect", inspect_context_tool)
+
+    planner = TemplatePlanner()
+    planner.register_template(
+        "inspect_flow",
+        [
+            Step(name="inspect", tool="inspect"),
+        ]
+    )
+
+    data = {
+        "chef_agent": {
+            "goal": "inspect_flow",
+            "description": "Culinary Helper",
+            "metadata": {
+                "version": "2.3.1",
+                "author": "Yasin Kitchen Team"
+            },
+            "config": {
+                "model": "gpt-4-pro",
+                "temperature": 0.4
+            },
+            "profile": {
+                "role": "Assistant Chef",
+                "backstory": "A culinary assistant",
+                "tone": "polite",
+                "instructions": ["cook safely", "taste food"]
+            },
+            "prompt_handler": {
+                "system_prompt_template": "You are {role}. Tone: {tone}. Instructions: {instructions}"
+            }
+        }
+    }
+
+    agent_registry = AgentRegistry.from_dict(data)
+
+    client = YasinCoreClient()
+    register_all_agents(client, agent_registry, planner, tool_runner)
+
+    task = client.create_task(id="task-003", name="chef_agent", input_data={"extra": "data"})
+    executed_task = client.execute_task(task)
+
+    assert executed_task.status == "completed"
+    assert executed_task.result == "inspection-passed"
