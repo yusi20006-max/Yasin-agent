@@ -13,6 +13,13 @@ from .planner import Planner, Step, TemplatePlanner, UnknownGoalError
 from .state_machine import InvalidTransitionError, StateMachine, TaskState
 from .task import StepResult, Task, TaskResult
 from .tool_runner import ToolNotFoundError, ToolRunner
+from .integration import (
+    YasinCoreAgentAdapter,
+    get_active_client,
+    save_agent_memory,
+    get_agent_memory,
+    register_all_agents,
+)
 
 __all__ = [
     "AgentConfig",
@@ -31,6 +38,11 @@ __all__ = [
     "TaskResult",
     "ToolNotFoundError",
     "ToolRunner",
+    "YasinCoreAgentAdapter",
+    "get_active_client",
+    "save_agent_memory",
+    "get_agent_memory",
+    "register_all_agents",
 ]
 
 __version__ = "0.1.0"
