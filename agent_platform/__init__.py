@@ -32,6 +32,12 @@ from .integration import (
     discover_plugins_via_sdk,
     execute_plugin_via_sdk,
 )
+from .memory_context import (
+    MemoryManager,
+    ContextManager,
+    Session,
+    SessionManager,
+)
 
 __all__ = [
     "AgentConfig",
@@ -65,6 +71,10 @@ __all__ = [
     "register_plugin_via_sdk",
     "discover_plugins_via_sdk",
     "execute_plugin_via_sdk",
+    "MemoryManager",
+    "ContextManager",
+    "Session",
+    "SessionManager",
 ]
 
 __version__ = "0.2.0"

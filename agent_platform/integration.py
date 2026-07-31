@@ -24,6 +24,24 @@ try:
     )
 except ImportError:
     # Fallback to simulated objects if yasin_core is not present (for standalone/mock tests)
+    import contextvars
+    _mock_current_context = contextvars.ContextVar("mock_current_context", default=None)
+
+    class MockContext:
+        def __init__(self, d=None):
+            self._data = dict(d) if d is not None else {}
+        def get(self, k, default=None):
+            return self._data.get(k, default)
+        def set(self, k, v):
+            self._data[k] = v
+        def delete(self, k):
+            if k in self._data:
+                del self._data[k]
+        def clear(self):
+            self._data.clear()
+        def to_dict(self):
+            return dict(self._data)
+
     class BaseAgent:  # type: ignore
         def __init__(self, name: str, description: str = "", tools: Optional[list[Any]] = None):
             self.name = name
@@ -36,6 +54,8 @@ except ImportError:
             self._tools = {}
             self._plugins = {}
             self._agents = {}
+            self._short_term_memory = {}
+            self._long_term_memory = {}
         def register_tool(self, tool):
             self._tools[tool.name] = tool
         def get_tool(self, name):
@@ -58,6 +78,24 @@ except ImportError:
             self._agents[agent.name] = agent
         def list_agents(self):
             return list(self._agents.keys())
+        def get_agent(self, name: str) -> Optional[BaseAgent]:
+            return self._agents.get(name)
+        def save_memory(self, key, value, category="short-term"):
+            if category == "short-term":
+                self._short_term_memory[key] = value
+            elif category == "long-term":
+                self._long_term_memory[key] = value
+            else:
+                raise ValueError(f"Unsupported memory category: {category}")
+        def get_memory(self, key, default=None, category="short-term"):
+            if category == "short-term":
+                return self._short_term_memory.get(key, default)
+            elif category == "long-term":
+                return self._long_term_memory.get(key, default)
+            else:
+                raise ValueError(f"Unsupported memory category: {category}")
+        def create_context(self, data=None):
+            return MockContext(data)
 
     class BaseTool:
         def __init__(self, name: str, description: str = "", args_schema: Optional[Dict[str, Any]] = None):
@@ -97,17 +135,20 @@ except ImportError:
     def active_context(context: Any) -> Any:  # type: ignore
         import contextlib
         @contextlib.contextmanager
-        def _dummy():
-            yield context
-        return _dummy()
+        def _manager():
+            token = _mock_current_context.set(context)
+            try:
+                yield context
+            finally:
+                _mock_current_context.reset(token)
+        return _manager()
 
     def get_current_context() -> Any:  # type: ignore
-        class DummyContext:
-            def get(self, key: str, default: Any = None) -> Any:
-                return default
-            def set(self, key: str, value: Any) -> None:
-                pass
-        return DummyContext()
+        ctx = _mock_current_context.get()
+        if ctx is None:
+            ctx = MockContext()
+            _mock_current_context.set(ctx)
+        return ctx
 
 
 from agent_platform.executor import Executor as AgentExecutor
