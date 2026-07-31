@@ -27,6 +27,9 @@ except ImportError:
     import contextvars
     _mock_current_context = contextvars.ContextVar("mock_current_context", default=None)
 
+    class YasinPlugin:
+        pass
+
     class MockContext:
         def __init__(self, d=None):
             self._data = dict(d) if d is not None else {}
@@ -56,6 +59,13 @@ except ImportError:
             self._agents = {}
             self._short_term_memory = {}
             self._long_term_memory = {}
+        def get_version(self) -> str:
+            return "1.0.0"
+        @property
+        def version(self) -> str:
+            return "1.0.0"
+        def get_info(self) -> dict:
+            return {"name": "Yasin Core SDK Client", "version": "1.0.0"}
         def register_tool(self, tool):
             self._tools[tool.name] = tool
         def get_tool(self, name):
@@ -73,7 +83,31 @@ except ImportError:
         def list_plugins(self):
             return list(self._plugins.keys())
         def discover_plugins(self, plugins_dir="plugins"):
-            pass
+            import os
+            try:
+                from yasin_core.plugins import YasinPlugin
+            except ImportError:
+                YasinPlugin = globals().get("YasinPlugin")
+                if YasinPlugin is None:
+                    class YasinPlugin:
+                        pass
+            if not os.path.exists(plugins_dir):
+                return
+            for filename in os.listdir(plugins_dir):
+                if filename.endswith(".py"):
+                    filepath = os.path.join(plugins_dir, filename)
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        code = f.read()
+                    local_dict = {}
+                    local_dict["YasinPlugin"] = YasinPlugin
+                    try:
+                        exec(code, local_dict, local_dict)
+                        for name, obj in local_dict.items():
+                            if isinstance(obj, type) and issubclass(obj, YasinPlugin) and obj is not YasinPlugin:
+                                plugin_inst = obj()
+                                self.register_plugin(plugin_inst)
+                    except Exception:
+                        pass
         def register_agent(self, agent):
             self._agents[agent.name] = agent
         def list_agents(self):
@@ -96,6 +130,30 @@ except ImportError:
                 raise ValueError(f"Unsupported memory category: {category}")
         def create_context(self, data=None):
             return MockContext(data)
+        def create_task(self, id: str, name: str, input_data: Optional[Dict[str, Any]] = None) -> Any:
+            class MockTask:
+                def __init__(self, id, name, input_data):
+                    self.id = id
+                    self.name = name
+                    self.input_data = input_data or {}
+                    self.status = "pending"
+                    self.result = None
+                    self.error = None
+            return MockTask(id, name, input_data)
+        def execute_task(self, task: Any) -> Any:
+            agent = self.get_agent(task.name)
+            if agent:
+                agent.start()
+                try:
+                    res = agent.execute(task.input_data)
+                    task.status = "completed"
+                    task.result = res
+                except Exception as e:
+                    task.status = "failed"
+                    task.error = str(e)
+                finally:
+                    agent.stop()
+            return task
 
     class BaseTool:
         def __init__(self, name: str, description: str = "", args_schema: Optional[Dict[str, Any]] = None):
