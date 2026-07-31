@@ -105,6 +105,37 @@ class YasinCoreAgentAdapter(BaseAgent):
             "goal": self.agent_config.goal,
         })
 
+        # در صورت وجود تعریف پیشرفته، پرکردن متادیتا، پیکربندی، پروفایل و پرامپت‌ها در کانتکست
+        from agent_platform.agent_definition import AgentDefinition
+        if isinstance(self.agent_config, AgentDefinition):
+            # رندر پرامپت‌ها
+            system_prompt = self.agent_config.prompt_handler.render_system_prompt(self.agent_config.profile)
+            user_prompt = self.agent_config.prompt_handler.render_user_prompt(input_data)
+
+            # قرار دادن آنها در کانتکست جهت استفاده در ابزارها یا LLM
+            core_context.set("system_prompt", system_prompt)
+            core_context.set("user_prompt", user_prompt)
+            core_context.set("agent_profile", {
+                "role": self.agent_config.profile.role,
+                "backstory": self.agent_config.profile.backstory,
+                "tone": self.agent_config.profile.tone,
+                "instructions": self.agent_config.profile.instructions,
+            })
+            core_context.set("agent_metadata", {
+                "version": self.agent_config.metadata.version,
+                "author": self.agent_config.metadata.author,
+                "tags": self.agent_config.metadata.tags,
+                "custom_metadata": self.agent_config.metadata.custom_metadata,
+            })
+            core_context.set("agent_config", {
+                "model": self.agent_config.config.model,
+                "temperature": self.agent_config.config.temperature,
+                "max_tokens": self.agent_config.config.max_tokens,
+                "top_p": self.agent_config.config.top_p,
+                "timeout": self.agent_config.config.timeout,
+                "extra_config": self.agent_config.config.extra_config,
+            })
+
         # اجرای گام‌ها در قالب اکتیو کانتکست
         with active_context(core_context):
             agent_task = AgentTask(

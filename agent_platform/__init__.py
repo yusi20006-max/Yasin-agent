@@ -8,6 +8,13 @@ agent_platform
 """
 
 from .agent_registry import AgentConfig, AgentNotFoundError, AgentRegistry
+from .agent_definition import (
+    AgentMetadata,
+    AgentConfiguration,
+    AgentProfile,
+    PromptHandler,
+    AgentDefinition,
+)
 from .executor import Executor
 from .planner import Planner, Step, TemplatePlanner, UnknownGoalError
 from .state_machine import InvalidTransitionError, StateMachine, TaskState
@@ -25,6 +32,11 @@ __all__ = [
     "AgentConfig",
     "AgentNotFoundError",
     "AgentRegistry",
+    "AgentMetadata",
+    "AgentConfiguration",
+    "AgentProfile",
+    "PromptHandler",
+    "AgentDefinition",
     "Executor",
     "Planner",
     "Step",
@@ -45,4 +57,4 @@ __all__ = [
     "register_all_agents",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
