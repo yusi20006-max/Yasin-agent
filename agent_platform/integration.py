@@ -251,8 +251,9 @@ class YasinCoreAgentAdapter(BaseAgent):
             core_context = self.client.create_context(context_data)
         else:
             try:
+                import yasin_core.context
                 core_context = yasin_core.context.Context(context_data)
-            except NameError:
+            except (NameError, AttributeError, ImportError):
                 class MockContext:
                     def __init__(self, d):
                         self._data = d
