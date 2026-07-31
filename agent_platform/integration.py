@@ -8,11 +8,20 @@ integration.py
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 try:
     import yasin_core.context
-    from yasin_core.sdk import BaseAgent, YasinCoreClient, active_context, get_current_context
+    from yasin_core.sdk import (
+        BaseAgent,
+        YasinCoreClient,
+        active_context,
+        get_current_context,
+        BaseTool,
+        FunctionTool,
+        tool,
+        PluginExecutionBridge,
+    )
 except ImportError:
     # Fallback to simulated objects if yasin_core is not present (for standalone/mock tests)
     class BaseAgent:  # type: ignore
@@ -23,7 +32,67 @@ except ImportError:
             self.tools = tools or []
 
     class YasinCoreClient:  # type: ignore
-        pass
+        def __init__(self, short_term_memory=None, long_term_memory=None):
+            self._tools = {}
+            self._plugins = {}
+            self._agents = {}
+        def register_tool(self, tool):
+            self._tools[tool.name] = tool
+        def get_tool(self, name):
+            return self._tools.get(name)
+        def remove_tool(self, name):
+            return self._tools.pop(name, None)
+        def list_tools(self):
+            return list(self._tools.keys())
+        def execute_tool(self, name, *args, **kwargs):
+            return self._tools[name](*args, **kwargs)
+        def register_plugin(self, plugin):
+            self._plugins[plugin.name] = plugin
+        def get_plugin(self, name):
+            return self._plugins.get(name)
+        def list_plugins(self):
+            return list(self._plugins.keys())
+        def discover_plugins(self, plugins_dir="plugins"):
+            pass
+        def register_agent(self, agent):
+            self._agents[agent.name] = agent
+        def list_agents(self):
+            return list(self._agents.keys())
+
+    class BaseTool:
+        def __init__(self, name: str, description: str = "", args_schema: Optional[Dict[str, Any]] = None):
+            self.name = name
+            self.description = description
+            self.args_schema = args_schema or {}
+        def execute(self, *args, **kwargs):
+            pass
+        def __call__(self, *args, **kwargs):
+            return self.execute(*args, **kwargs)
+
+    class FunctionTool(BaseTool):
+        def __init__(self, func, name=None, description=None, args_schema=None):
+            self.func = func
+            super().__init__(name or func.__name__, description or func.__doc__ or "", args_schema)
+        def execute(self, *args, **kwargs):
+            return self.func(*args, **kwargs)
+
+    def tool(arg=None, **kwargs):
+        if callable(arg):
+            return FunctionTool(arg)
+        def decorator(func):
+            return FunctionTool(func, **kwargs)
+        return decorator
+
+    class PluginExecutionBridge(BaseAgent):
+        def __init__(self, name, plugin_registry, plugin_name, description=""):
+            super().__init__(name, description)
+            self.plugin_registry = plugin_registry
+            self.plugin_name = plugin_name
+        def execute(self, input_data):
+            plugin = self.plugin_registry.get(self.plugin_name)
+            if plugin and hasattr(plugin, "execute"):
+                return plugin.execute(input_data)
+            return None
 
     def active_context(context: Any) -> Any:  # type: ignore
         import contextlib
@@ -196,6 +265,17 @@ def register_all_agents(
     tool_runner: Any,
 ) -> None:
     """ثبت خودکار تمامی ایجنت‌های موجود در رجیستری در کلاینت Yasin-Core."""
+    # ثبت ابزارهای ToolRunner در Yasin-Core جهت برقراری یکپارچگی ابزارها
+    if hasattr(client, "register_tool"):
+        for tool_name in tool_runner.list_tools():
+            if hasattr(client, "get_tool") and client.get_tool(tool_name) is None:
+                # Wrap tool_runner's tool into a FunctionTool and register
+                tool_func = tool_runner._tools[tool_name]
+                if isinstance(tool_func, BaseTool):
+                    client.register_tool(tool_func)
+                else:
+                    client.register_tool(FunctionTool(tool_func, name=tool_name))
+
     for agent_name in agent_registry.list_agents():
         config = agent_registry.get(agent_name)
         adapter = YasinCoreAgentAdapter(
@@ -206,3 +286,52 @@ def register_all_agents(
             client=client,
         )
         client.register_agent(adapter)
+
+
+# توابع کمکی یکپارچه‌سازی ابزارها و پلاگین‌ها طبق SDK عمومی Yasin-Core
+
+def register_tool_via_sdk(client: YasinCoreClient, tool_obj: Any) -> None:
+    """ثبت ابزار در کلاینت Core با استفاده از SDK عمومی."""
+    if isinstance(tool_obj, BaseTool):
+        client.register_tool(tool_obj)
+    elif callable(tool_obj):
+        name = getattr(tool_obj, "__name__", "custom_tool")
+        client.register_tool(FunctionTool(tool_obj, name=name))
+    else:
+        raise ValueError("Invalid tool object. Must be callable or inherit from BaseTool.")
+
+
+def discover_tools_via_sdk(client: YasinCoreClient) -> List[str]:
+    """یافتن و لیست کردن ابزارهای ثبت‌شده در هسته."""
+    if hasattr(client, "list_tools"):
+        return client.list_tools()
+    return []
+
+
+def register_plugin_via_sdk(client: YasinCoreClient, plugin: Any) -> None:
+    """ثبت یک پلاگین در کلاینت Core با استفاده از SDK عمومی."""
+    if hasattr(client, "register_plugin"):
+        client.register_plugin(plugin)
+
+
+def discover_plugins_via_sdk(client: YasinCoreClient, plugins_dir: str = "plugins") -> None:
+    """کشف پلاگین‌ها از دایرکتوری مشخص با استفاده از SDK عمومی."""
+    if hasattr(client, "discover_plugins"):
+        client.discover_plugins(plugins_dir)
+
+
+def execute_plugin_via_sdk(client: YasinCoreClient, plugin_name: str, input_data: Dict[str, Any]) -> Any:
+    """اجرای مستقیم یک پلاگین با استفاده از SDK عمومی."""
+    if hasattr(client, "get_plugin"):
+        plugin = client.get_plugin(plugin_name)
+        if not plugin:
+            raise ValueError(f"Plugin '{plugin_name}' not found.")
+        if hasattr(plugin, "execute"):
+            return plugin.execute(input_data)
+        elif hasattr(plugin, "run"):
+            return plugin.run(input_data)
+        elif callable(plugin):
+            return plugin(input_data)
+        else:
+            raise AttributeError(f"Plugin '{plugin_name}' is not executable.")
+    raise ValueError("Client does not support get_plugin.")

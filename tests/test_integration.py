@@ -16,6 +16,11 @@ from agent_platform import (
     save_agent_memory,
     get_agent_memory,
     get_active_client,
+    register_tool_via_sdk,
+    discover_tools_via_sdk,
+    register_plugin_via_sdk,
+    discover_plugins_via_sdk,
+    execute_plugin_via_sdk,
 )
 
 
@@ -134,7 +139,6 @@ def test_memory_and_context_handling():
     # Verify that execution history and metadata are recorded in context
     agent = client.get_agent("mem_agent")
     assert agent is not None
-    # We can fetch the agent's core context or see the logs, but everything passed successfully.
 
 
 def test_agent_definition_integration_with_yasin_core():
@@ -205,3 +209,114 @@ def test_agent_definition_integration_with_yasin_core():
 
     assert executed_task.status == "completed"
     assert executed_task.result == "inspection-passed"
+
+
+def test_sdk_tool_discovery_registration_and_execution():
+    client = YasinCoreClient()
+
+    # 1. Tool discovery (initially empty)
+    initial_tools = discover_tools_via_sdk(client)
+    assert len(initial_tools) == 0
+
+    # 2. Tool registration
+    def custom_sdk_add(a: int, b: int) -> int:
+        return a + b
+
+    register_tool_via_sdk(client, custom_sdk_add)
+
+    # Verify discovery after registration
+    updated_tools = discover_tools_via_sdk(client)
+    assert "custom_sdk_add" in updated_tools
+
+    # 3. Tool execution via SDK client
+    res = client.execute_tool("custom_sdk_add", a=5, b=12)
+    assert res == 17
+
+    # 4. Integrate with agent execution loop
+    # Let's create an agent that uses "custom_sdk_add" tool.
+    # Our new ToolRunner should dynamically find it on the active client in active_context!
+    tool_runner = ToolRunner()  # No custom_sdk_add registered here!
+    planner = TemplatePlanner()
+    planner.register_template(
+        "add_flow",
+        [
+            Step(name="add_step", tool="custom_sdk_add"),
+        ]
+    )
+
+    agent_registry = AgentRegistry()
+    agent_registry.register(
+        AgentConfig(
+            name="math_solver_agent",
+            goal="add_flow",
+            description="Solves math"
+        )
+    )
+
+    register_all_agents(client, agent_registry, planner, tool_runner)
+
+    # Execute task with input
+    task = client.create_task(id="task-math", name="math_solver_agent", input_data={"a": 20, "b": 30})
+    executed_task = client.execute_task(task)
+
+    assert executed_task.status == "completed"
+    assert executed_task.result == 50
+
+
+def test_sdk_plugin_discovery_registration_and_usage():
+    client = YasinCoreClient()
+
+    # Define a custom Yasin-Core plugin
+    from yasin_core.plugins import YasinPlugin
+
+    class SampleIntegrationPlugin(YasinPlugin):
+        name = "sample_integration"
+
+        def start(self):
+            self.started = True
+
+        def stop(self):
+            self.started = False
+
+        def execute(self, input_data):
+            return f"plugin_output:{input_data.get('val', '')}"
+
+    plugin = SampleIntegrationPlugin()
+
+    # 1. Plugin registration
+    register_plugin_via_sdk(client, plugin)
+    assert "sample_integration" in client.list_plugins()
+
+    # 2. Plugin usage through SDK directly
+    res = execute_plugin_via_sdk(client, "sample_integration", {"val": "hello"})
+    assert res == "plugin_output:hello"
+
+    # 3. Discover plugins using mock plugins dir (Plugin discovery)
+    import tempfile
+    import os
+    with tempfile.TemporaryDirectory() as tmpdir:
+        plugin_code = """
+from yasin_core.plugins import YasinPlugin
+
+class AutoDiscoveredIntegrationPlugin(YasinPlugin):
+    name = "auto_discovered_integration"
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+    def execute(self, input_data):
+        return f"AutoIntegration: {input_data.get('val', '')}"
+"""
+        plugin_filepath = os.path.join(tmpdir, "discovered_integration_plugin.py")
+        with open(plugin_filepath, "w", encoding="utf-8") as f:
+            f.write(plugin_code)
+
+        discover_plugins_via_sdk(client, plugins_dir=tmpdir)
+        assert "auto_discovered_integration" in client.list_plugins()
+
+        # Verify execution of discovered plugin
+        res_discovered = execute_plugin_via_sdk(client, "auto_discovered_integration", {"val": "world"})
+        assert res_discovered == "AutoIntegration: world"

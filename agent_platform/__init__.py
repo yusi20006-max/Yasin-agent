@@ -26,6 +26,11 @@ from .integration import (
     save_agent_memory,
     get_agent_memory,
     register_all_agents,
+    register_tool_via_sdk,
+    discover_tools_via_sdk,
+    register_plugin_via_sdk,
+    discover_plugins_via_sdk,
+    execute_plugin_via_sdk,
 )
 
 __all__ = [
@@ -55,6 +60,11 @@ __all__ = [
     "save_agent_memory",
     "get_agent_memory",
     "register_all_agents",
+    "register_tool_via_sdk",
+    "discover_tools_via_sdk",
+    "register_plugin_via_sdk",
+    "discover_plugins_via_sdk",
+    "execute_plugin_via_sdk",
 ]
 
 __version__ = "0.2.0"
