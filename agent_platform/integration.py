@@ -24,6 +24,27 @@ try:
     )
 except ImportError:
     # Fallback to simulated objects if yasin_core is not present (for standalone/mock tests)
+    import contextvars
+    _mock_current_context = contextvars.ContextVar("mock_current_context", default=None)
+
+    class YasinPlugin:
+        pass
+
+    class MockContext:
+        def __init__(self, d=None):
+            self._data = dict(d) if d is not None else {}
+        def get(self, k, default=None):
+            return self._data.get(k, default)
+        def set(self, k, v):
+            self._data[k] = v
+        def delete(self, k):
+            if k in self._data:
+                del self._data[k]
+        def clear(self):
+            self._data.clear()
+        def to_dict(self):
+            return dict(self._data)
+
     class BaseAgent:  # type: ignore
         def __init__(self, name: str, description: str = "", tools: Optional[list[Any]] = None):
             self.name = name
@@ -36,6 +57,15 @@ except ImportError:
             self._tools = {}
             self._plugins = {}
             self._agents = {}
+            self._short_term_memory = {}
+            self._long_term_memory = {}
+        def get_version(self) -> str:
+            return "1.0.0"
+        @property
+        def version(self) -> str:
+            return "1.0.0"
+        def get_info(self) -> dict:
+            return {"name": "Yasin Core SDK Client", "version": "1.0.0"}
         def register_tool(self, tool):
             self._tools[tool.name] = tool
         def get_tool(self, name):
@@ -53,11 +83,77 @@ except ImportError:
         def list_plugins(self):
             return list(self._plugins.keys())
         def discover_plugins(self, plugins_dir="plugins"):
-            pass
+            import os
+            try:
+                from yasin_core.plugins import YasinPlugin
+            except ImportError:
+                YasinPlugin = globals().get("YasinPlugin")
+                if YasinPlugin is None:
+                    class YasinPlugin:
+                        pass
+            if not os.path.exists(plugins_dir):
+                return
+            for filename in os.listdir(plugins_dir):
+                if filename.endswith(".py"):
+                    filepath = os.path.join(plugins_dir, filename)
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        code = f.read()
+                    local_dict = {}
+                    local_dict["YasinPlugin"] = YasinPlugin
+                    try:
+                        exec(code, local_dict, local_dict)
+                        for name, obj in local_dict.items():
+                            if isinstance(obj, type) and issubclass(obj, YasinPlugin) and obj is not YasinPlugin:
+                                plugin_inst = obj()
+                                self.register_plugin(plugin_inst)
+                    except Exception:
+                        pass
         def register_agent(self, agent):
             self._agents[agent.name] = agent
         def list_agents(self):
             return list(self._agents.keys())
+        def get_agent(self, name: str) -> Optional[BaseAgent]:
+            return self._agents.get(name)
+        def save_memory(self, key, value, category="short-term"):
+            if category == "short-term":
+                self._short_term_memory[key] = value
+            elif category == "long-term":
+                self._long_term_memory[key] = value
+            else:
+                raise ValueError(f"Unsupported memory category: {category}")
+        def get_memory(self, key, default=None, category="short-term"):
+            if category == "short-term":
+                return self._short_term_memory.get(key, default)
+            elif category == "long-term":
+                return self._long_term_memory.get(key, default)
+            else:
+                raise ValueError(f"Unsupported memory category: {category}")
+        def create_context(self, data=None):
+            return MockContext(data)
+        def create_task(self, id: str, name: str, input_data: Optional[Dict[str, Any]] = None) -> Any:
+            class MockTask:
+                def __init__(self, id, name, input_data):
+                    self.id = id
+                    self.name = name
+                    self.input_data = input_data or {}
+                    self.status = "pending"
+                    self.result = None
+                    self.error = None
+            return MockTask(id, name, input_data)
+        def execute_task(self, task: Any) -> Any:
+            agent = self.get_agent(task.name)
+            if agent:
+                agent.start()
+                try:
+                    res = agent.execute(task.input_data)
+                    task.status = "completed"
+                    task.result = res
+                except Exception as e:
+                    task.status = "failed"
+                    task.error = str(e)
+                finally:
+                    agent.stop()
+            return task
 
     class BaseTool:
         def __init__(self, name: str, description: str = "", args_schema: Optional[Dict[str, Any]] = None):
@@ -97,17 +193,20 @@ except ImportError:
     def active_context(context: Any) -> Any:  # type: ignore
         import contextlib
         @contextlib.contextmanager
-        def _dummy():
-            yield context
-        return _dummy()
+        def _manager():
+            token = _mock_current_context.set(context)
+            try:
+                yield context
+            finally:
+                _mock_current_context.reset(token)
+        return _manager()
 
     def get_current_context() -> Any:  # type: ignore
-        class DummyContext:
-            def get(self, key: str, default: Any = None) -> Any:
-                return default
-            def set(self, key: str, value: Any) -> None:
-                pass
-        return DummyContext()
+        ctx = _mock_current_context.get()
+        if ctx is None:
+            ctx = MockContext()
+            _mock_current_context.set(ctx)
+        return ctx
 
 
 from agent_platform.executor import Executor as AgentExecutor
