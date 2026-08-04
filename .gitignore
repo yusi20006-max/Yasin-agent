@@ -8,3 +8,7 @@ __pycache__/
 venv/
 ENV/
 env/
+
+# Local audit artifacts
+pytest-full.log
+audit-rg.log
