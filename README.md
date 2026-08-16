@@ -1,154 +1,145 @@
-# agent_platform (Yasin-Agent) - نسخه ۱.۰.۰ پایدار
+# agent_platform (Yasin-Agent) — v1.0.0 Stable
 
-بسته‌ی پیشرفته و پایدار اجرای وظایف چندمرحله‌ای برای YasinAI (بخشی از ریپازیتوری Yasin-AI). این بسته لایه‌ی ارتباطی بین لایه‌های مختلف ایجنت، سیستم گردش کار، ابزارها، پلاگین‌ها، حافظه، کانتکست و SDK هسته (Yasin-Core SDK) را فراهم می‌سازد.
+Independent multi-step agent execution package for the **Yasin ecosystem**.
 
-هدف اصلی طراحی این ریپازیتوری، استقلال کامل لایه پردازشی از CLI یا لایه‌های حمل‌ونقل شبکه (Transport-agnostic) است تا به سادگی بتوان یک لایه وب (مانند FastAPI) روی آن پیاده‌سازی کرد.
+According to YASIN-DOCS ADR-001:
 
----
+- **Yasin-Agent** owns agent planning, workflow, tools, sessions, and execution semantics.
+- **Yasin-Core** is the generic runtime/SDK foundation (this package integrates via adapter).
+- **Yasin-AI** is the canonical shared AI capability platform — consumers use only public contracts (`yasinai.contracts` / `yasinai.services`). Optional generation/memory via Yasin-AI is tracked in issue **#19** and is **DEFERRED** until needed.
 
-## ویژگی‌های کلیدی نسخه ۱.۰.۰ (v1.0 Stable Release)
+This repository is **not** a submodule or component of Yasin-AI. It provides the agent layer between agent definitions, workflow, tools, plugins, memory/context, and the Yasin-Core SDK.
 
-- **لایه‌ی یکپارچه‌ساز ایجنت (Agent Definition Layer)**: تعریف ساختاریافته ایجنت‌ها شامل متادیتا (Metadata)، تنظیمات مدل و فنی (Configuration)، ویژگی‌های شخصیتی/پرسونا (Profile) و مدیریت قالب‌های پیشرفته پرامپت (PromptHandler).
-- **سیستم گردش کار (Workflow/Planner)**: قابلیت تعریف پلن‌های ترتیبی با استفاده از `TemplatePlanner` و چرخه حیات مدیریت‌شده وضعیت کارهای تسک (`StateMachine`).
-- **اجراکننده جریان کاری (Executor)**: پشتیبانی از اجرای گام‌به‌گام مراحل کاری همراه با اعتبارسنجی خروجی (Validators) و مکانیزم تلاش مجدد خطاها (Retries).
-- **سیستم ابزارها (Tool System)**: ثبت و فراخوانی پویا با انطباق خودکار امضای متدها (`ToolRunner`) و قابلیت استفاده از ابزارهای ثبت‌شده در لایه SDK کلاینت.
-- **سیستم پلاگین‌ها (Plugin System)**: کشف خودکار (Auto-discovery) پلاگین‌ها از دایرکتوری‌های مشخص، ثبت و اجرای پلاگین‌ها به کمک SDK کلاینت Yasin-Core.
-- **حافظه و کانتکست (Memory & Context)**: مدیریت ایزوله و نخی کانتکست‌ها (`ContextManager`) و دسترسی به فضاهای حافظه کوتاه‌مدت و بلندمدت هسته (`MemoryManager`).
-- **مدیریت نشست‌ها (Session Handling)**: قابلیت راه‌اندازی سشن‌های تعاملی مستقل با کانتکست و ایزوله‌سازی حافظه مجزا به همراه کلاس مدیر نشست‌ها (`SessionManager`).
-- **یکپارچگی و آداپتور SDK**: آداپتور آماده `YasinCoreAgentAdapter` جهت تبدیل مستقیم ایجنت‌های پلتفرم به عنوان ایجنت معتبر در هسته Yasin-Core.
+Design goal: full independence of the processing layer from CLI or network transport (transport-agnostic), so a web layer (e.g. FastAPI) can sit on top cleanly.
 
 ---
 
-## ساختار پکیج
+## Key features (v1.0 Stable)
+
+- **Agent Definition Layer**: structured agents with metadata, model/tech config, persona/profile, and advanced prompt templates (`PromptHandler`).
+- **Workflow / Planner**: sequential plans via `TemplatePlanner` and managed task state lifecycle (`StateMachine`).
+- **Executor**: step-by-step execution with output validators and retries.
+- **Tool System**: dynamic registration/invocation with signature adaptation (`ToolRunner`); tools registered into the Core SDK client.
+- **Plugin System**: auto-discovery from configured directories; register/run via Yasin-Core SDK client.
+- **Memory & Context**: isolated, thread-aware contexts (`ContextManager`) and short/long-term memory spaces (`MemoryManager`).
+- **Session Handling**: interactive sessions with isolated context/memory (`SessionManager`).
+- **SDK adapter**: `YasinCoreAgentAdapter` maps platform agents to valid Yasin-Core agents.
+
+---
+
+## Package layout
 
 ```
 agent_platform/
 ├── agent_platform/
-│   ├── __init__.py          # شناسه نسخه و صادرکننده رابط‌های عمومی
-│   ├── agent_definition.py  # ساختار پیشرفته ایجنت (Metadata, Config, Profile, PromptHandler)
-│   ├── agent_registry.py    # رجیستری و ثبت‌نام ایجنت‌ها (حالت ساده و پیشرفته دیتایی)
-│   ├── task.py              # ساختار نگهداری وضعیت کارها (Task, TaskResult, StepResult)
-│   ├── state_machine.py     # کنترل چرخه وضعیت کار (PENDING -> PLANNING -> RUNNING -> SUCCEEDED/FAILED)
-│   ├── planner.py           # تعریف پلنر و گام‌های اجرایی (Step, TemplatePlanner)
-│   ├── executor.py          # موتور اجرای ترتیبی گام‌ها به همراه retry و validation
-│   ├── tool_runner.py       # رجیستری و مدیریت فراخوانی ابزارها با فیلتر پارامترها
-│   ├── memory_context.py    # مدیریت حافظه، کانتکست پردازشی و سشن‌های ایزوله در سطح برنامه
-│   ├── integration.py       # کدهای یکپارچه‌ساز و آداپتور با Yasin-Core SDK به همراه لایه Fallback
-│   └── cli.py               # رابط خط فرمان، ساخت رجیستری‌های پیش‌فرض و الحاق به CLI کلی YasinAI
-├── tests/                   # تست‌های کامل و جامع پکیج
-│   ├── test_agent_platform.py   # تست‌های مستقل عملکردی لایه‌های ایجنت، پلنر، ماشین حالت و ابزارها
-│   ├── test_memory_context.py   # تست‌های مدیریت حافظه، کانتکست‌ها و نشست‌های کاری ایزوله
-│   └── test_integration.py      # تست‌های جامع یکپارچگی ابزارها، پلاگین‌ها، حافظه و آداپتور SDK
-├── conftest.py              # تنظیمات لودر تست و ایجاد لایه mock پویا برای yasin_core
-└── README.md                # مستندات راهنمای پروژه
+│   ├── __init__.py          # version + public exports
+│   ├── agent_definition.py  # Metadata, Config, Profile, PromptHandler
+│   ├── agent_registry.py    # agent registration
+│   ├── task.py              # Task, TaskResult, StepResult
+│   ├── state_machine.py     # PENDING → PLANNING → RUNNING → SUCCEEDED/FAILED
+│   ├── planner.py           # Step, TemplatePlanner
+│   ├── executor.py          # sequential steps + retry + validation
+│   ├── tool_runner.py       # tool registry and invocation
+│   ├── memory_context.py    # memory, context, isolated sessions
+│   ├── integration.py       # Yasin-Core SDK adapter + fallback
+│   └── cli.py               # CLI helpers
+├── tests/
+│   ├── test_agent_platform.py
+│   ├── test_memory_context.py
+│   └── test_integration.py
+├── conftest.py
+└── README.md
 ```
 
 ---
 
-## نصب و استفاده محلی
-
-این پوشه را داخل ریپازیتوری Yasin-AI کپی کنید (کنار پوشه‌های `knowledge_platform/`، `security_platform/` و ...) و سپس وابستگی‌های توسعه را نصب کنید:
+## Local install and tests
 
 ```bash
 pip install pytest click
-```
-
-### اجرای تست‌ها
-برای اطمینان از سلامت کامل ماژول‌ها و بخش‌های یکپارچه‌سازی، تست‌ها را اجرا کنید:
-
-```bash
-# اجرای تست‌ها در محیط جاری
+# optional: editable install of Yasin-Core if integrating against a real SDK
 pytest tests/ -v
 ```
 
 ---
 
-## مثال‌های کاربردی
+## Examples
 
-### ۱. تعریف و اجرای سریع یک جریان کار ساده
+### 1. Simple workflow
 
 ```python
 from agent_platform import TemplatePlanner, ToolRunner, Task, Executor, Step
 
-# ۱. تعریف و ثبت ابزارها
 tool_runner = ToolRunner()
 tool_runner.register("fetch", lambda context, previous_output=None, **_: "raw-news")
 tool_runner.register("translate", lambda context, previous_output=None, **_: f"fa({previous_output})")
 
-# ۲. پیکربندی جریان کار در پلنر
 planner = TemplatePlanner()
 planner.register_template("read_translate", [
     Step(name="fetch", tool="fetch"),
     Step(name="translate", tool="translate"),
 ])
 
-# ۳. ساخت تسک و اجرای آن با استفاده از Executor
 task = Task(name="demo", goal="read_translate")
 result = Executor(tool_runner).run(task, planner.plan("read_translate"))
 
-print(result.summary()) # موفقیت / شکست
-print("خروجی نهایی:", result.output) # fa(raw-news)
+print(result.summary())
+print("final:", result.output)  # fa(raw-news)
 ```
 
-### ۲. کار با سیستم نشست‌ها (Session) و ایزوله‌سازی حافظه
+### 2. Sessions and isolated memory
 
 ```python
 from agent_platform import SessionManager
 
 session_mgr = SessionManager()
-
-# ایجاد یک نشست کاری منحصربه‌فرد با کانتکست اولیه
 session = session_mgr.create_session("session_1001", {"user": "ali"})
-
-# ذخیره داده‌ها در حافظه اختصاصی و ایزوله این سشن
 session.save_short_term("selected_topic", "AI Technologies")
 session.save_long_term("theme_preference", "dark")
 
-# بازیابی مقادیر
-topic = session.get_short_term("selected_topic")
-theme = session.get_long_term("theme_preference")
+print(session.get_short_term("selected_topic"), session.get_long_term("theme_preference"))
 
-print(f"Topic: {topic}, Theme: {theme}")
-
-# اجرای یک تکه کد با کانتکست اختصاصی این سشن فعال
 with session.run_with_context():
-    # هر ماژولی در این بلاک از طریق get_current_context() به اطلاعات سشن دسترسی دارد
-    pass
+    pass  # get_current_context() available inside
 ```
 
-### ۳. یکپارچه‌سازی با Yasin-Core SDK
+### 3. Integration with Yasin-Core SDK
 
 ```python
 from yasin_core.sdk import YasinCoreClient
 from agent_platform import AgentRegistry, TemplatePlanner, ToolRunner, register_all_agents
 
-# ساخت رجیستری‌ها
 agent_registry = AgentRegistry()
 planner = TemplatePlanner()
 tool_runner = ToolRunner()
-
-# ساخت کلاینت Yasin-Core
 client = YasinCoreClient()
 
-# ثبت خودکار تمام ابزارها و ایجنت‌های پلتفرم در کلاینت اصلی هسته
 register_all_agents(client, agent_registry, planner, tool_runner)
 
-# اکنون کلاینت هسته قادر به کشف و اجرای ایجنت‌های ثبت‌شده است
 task = client.create_task(id="task-001", name="news_bot")
 executed_task = client.execute_task(task)
-print("وضعیت اجرا:", executed_task.status)
+print("status:", executed_task.status)
 ```
 
 ---
 
-## اتصال به رابط خط فرمان (CLI)
-
-`agent_platform.cli.run_agent(agent_name, agent_registry, planner, tool_runner)` تابع محوری خط فرمان است.
-
-برای اجرای یک ایجنت پیش‌فرض از پیش تعریف‌شده (news_bot) مستقیماً از طریق CLI پروژه می‌توانید دستور زیر را وارد نمایید:
+## CLI
 
 ```bash
 python -m agent_platform.cli agent run news_bot
 ```
 
-تابع `register_cli_command(cli_app)` به صورت هوشمند نوع CLI فعلی پروژه (مانند click یا argparse) را ارزیابی کرده و دستور `agent run` را به آن اضافه می‌کند تا یکپارچگی خط فرمان در بالاترین سطح خود تضمین گردد.
+`register_cli_command(cli_app)` attaches `agent run` to click/argparse-style CLIs when present.
+
+---
+
+## Ecosystem boundaries
+
+| Project | Role |
+|---------|------|
+| Yasin-Core | Runtime/SDK foundation |
+| Yasin-AI | Shared AI contracts (optional for Agent — #19 deferred) |
+| **Yasin-Agent (this repo)** | Planning, workflow, tools, sessions |
+| YasinHub | Status/health reporting CLI |
+| Yasin-cli | Unified operator command surface (target) |
+| YasinRelay / Feed / Press | Domain content pipelines |
