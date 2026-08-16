@@ -24,48 +24,42 @@ from .planner import Step, TemplatePlanner
 from .task import Task, TaskResult
 from .tool_runner import ToolRunner
 
-# Try importing real modules from other platforms, or fall back to simulated ones
-try:
-    import knowledge_platform
-except ImportError:
-    class MockKnowledgePlatform:
-        @staticmethod
-        def fetch_news(source: str = "default") -> str:
-            return f"خبر خام از منبع {source}"
+# Local demo tool backends only (FINAL-G2 / #22).
+# Do NOT import Yasin-AI private packages (knowledge_platform / security_platform /
+# developer_platform). Agent runtime is Core-based; Yasin-AI GenerationService is
+# NOT PLANNED until a concrete public-contract need is issued separately.
+class _LocalKnowledgeTools:
+    @staticmethod
+    def fetch_news(source: str = "default") -> str:
+        return f"خبر خام از منبع {source}"
 
-        @staticmethod
-        def translate(text: str, target_lang: str = "fa") -> str:
-            return f"ترجمه‌شده به {target_lang}({text})"
+    @staticmethod
+    def translate(text: str, target_lang: str = "fa") -> str:
+        return f"ترجمه‌شده به {target_lang}({text})"
 
-        @staticmethod
-        def summarize(text: str) -> str:
-            return f"خلاصه({text})"
+    @staticmethod
+    def summarize(text: str) -> str:
+        return f"خلاصه({text})"
 
-    knowledge_platform = MockKnowledgePlatform()
 
-try:
-    import security_platform
-except ImportError:
-    class MockSecurityPlatform:
-        @staticmethod
-        def check_content(text: str) -> bool:
-            # Simple content filter: returns False if text contains "harmful" or "spam" or "bad"
-            lower_text = text.lower()
-            if any(word in lower_text for word in ["harmful", "spam", "bad"]):
-                return False
-            return True
+class _LocalSecurityTools:
+    @staticmethod
+    def check_content(text: str) -> bool:
+        lower_text = text.lower()
+        if any(word in lower_text for word in ["harmful", "spam", "bad"]):
+            return False
+        return True
 
-    security_platform = MockSecurityPlatform()
 
-try:
-    import developer_platform
-except ImportError:
-    class MockDeveloperPlatform:
-        @staticmethod
-        def publish(text: str) -> str:
-            return f"انتشاریافته: {text}"
+class _LocalDeveloperTools:
+    @staticmethod
+    def publish(text: str) -> str:
+        return f"انتشاریافته: {text}"
 
-    developer_platform = MockDeveloperPlatform()
+
+knowledge_platform = _LocalKnowledgeTools()
+security_platform = _LocalSecurityTools()
+developer_platform = _LocalDeveloperTools()
 
 
 # Define default tools mapping to the respective platform APIs
@@ -172,7 +166,6 @@ def register_cli_command(cli_app) -> None:
 
     class_name = cli_app.__class__.__name__
 
-    # Determine if click structure is present and matches click Group
     is_click_group = False
     if click is not None:
         click_group_cls = getattr(click, "Group", None)
@@ -181,7 +174,6 @@ def register_cli_command(cli_app) -> None:
         elif hasattr(cli_app, "command") and hasattr(cli_app, "group"):
             is_click_group = True
 
-    # 1. Click Group/Command structure
     if is_click_group:
         agent_group = cli_app.commands.get("agent")
         if agent_group is None:
@@ -211,7 +203,6 @@ def register_cli_command(cli_app) -> None:
             except Exception as e:
                 click.echo(f"خطای غیرمنتظره: {e}")
 
-    # 2. Argparse ArgumentParser structure
     elif "ArgumentParser" in class_name or hasattr(cli_app, "add_subparsers"):
         subparsers = None
         for action in cli_app._actions:
