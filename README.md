@@ -41,17 +41,21 @@ agent_platform/
 │   ├── executor.py          # sequential steps + retry + validation
 │   ├── tool_runner.py       # tool registry and invocation
 │   ├── memory_context.py    # memory, context, isolated sessions
+│   ├── execution.py         # observable execution workspace boundary (#26)
 │   ├── integration.py       # Yasin-Core SDK adapter + fallback
 │   └── cli.py               # CLI helpers
 ├── tests/
 │   ├── test_agent_platform.py
 │   ├── test_memory_context.py
+│   ├── test_execution_boundary.py
 │   └── test_integration.py
 ├── conftest.py
 └── README.md
 ```
 
 ---
+
+See [docs/EXECUTION_WORKSPACE_BOUNDARY.md](docs/EXECUTION_WORKSPACE_BOUNDARY.md) (Issue #26).
 
 ## Local install and tests
 
