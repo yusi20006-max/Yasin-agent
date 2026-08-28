@@ -44,6 +44,12 @@ from .execution import (
     make_workspace,
     redact_secrets,
 )
+from .harness import (
+    CollaborationHarness,
+    CollaborationResult,
+    WorkerResult,
+    WorkerSpec,
+)
 
 from .memory_context import (
     MemoryManager,
@@ -98,6 +104,10 @@ __all__ = [
     "WorkspaceBound",
     "make_workspace",
     "redact_secrets",
+    "CollaborationHarness",
+    "CollaborationResult",
+    "WorkerResult",
+    "WorkerSpec",
 ]
 
 __version__ = "1.0.0"
