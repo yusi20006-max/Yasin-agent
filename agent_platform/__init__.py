@@ -28,7 +28,6 @@ from .integration import (
     register_all_agents,
     register_tool_via_sdk,
     discover_tools_via_sdk,
-    register_tool_via_sdk,
     register_plugin_via_sdk,
     discover_plugins_via_sdk,
     execute_plugin_via_sdk,
