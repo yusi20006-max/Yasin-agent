@@ -28,6 +28,7 @@ from .integration import (
     register_all_agents,
     register_tool_via_sdk,
     discover_tools_via_sdk,
+    register_tool_via_sdk,
     register_plugin_via_sdk,
     discover_plugins_via_sdk,
     execute_plugin_via_sdk,
@@ -43,6 +44,12 @@ from .execution import (
     WorkspaceBound,
     make_workspace,
     redact_secrets,
+)
+from .harness import (
+    CollaborationHarness,
+    CollaborationResult,
+    WorkerResult,
+    WorkerSpec,
 )
 
 from .memory_context import (
@@ -98,6 +105,10 @@ __all__ = [
     "WorkspaceBound",
     "make_workspace",
     "redact_secrets",
+    "CollaborationHarness",
+    "CollaborationResult",
+    "WorkerResult",
+    "WorkerSpec",
 ]
 
 __version__ = "1.0.0"
