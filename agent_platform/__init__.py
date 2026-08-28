@@ -32,6 +32,19 @@ from .integration import (
     discover_plugins_via_sdk,
     execute_plugin_via_sdk,
 )
+from .execution import (
+    CapabilityDeniedError,
+    EventEmitter,
+    ExecutionEvent,
+    ExecutionEventType,
+    ExecutionRecord,
+    ExecutionRuntime,
+    ExecutionState,
+    WorkspaceBound,
+    make_workspace,
+    redact_secrets,
+)
+
 from .memory_context import (
     MemoryManager,
     ContextManager,
@@ -75,6 +88,16 @@ __all__ = [
     "ContextManager",
     "Session",
     "SessionManager",
+    "CapabilityDeniedError",
+    "EventEmitter",
+    "ExecutionEvent",
+    "ExecutionEventType",
+    "ExecutionRecord",
+    "ExecutionRuntime",
+    "ExecutionState",
+    "WorkspaceBound",
+    "make_workspace",
+    "redact_secrets",
 ]
 
 __version__ = "1.0.0"
