@@ -32,6 +32,11 @@ from .integration import (
     discover_plugins_via_sdk,
     execute_plugin_via_sdk,
 )
+from .persistence import (
+    ExecutionStore,
+    InMemoryExecutionStore,
+    JsonFileExecutionStore,
+)
 from .execution import (
     CapabilityDeniedError,
     EventEmitter,
@@ -75,6 +80,7 @@ __all__ = [
     "MemoryManager", "ContextManager", "Session", "SessionManager",
     "CapabilityDeniedError", "EventEmitter", "ExecutionEvent", "ExecutionEventType", "ExecutionRecord",
     "ExecutionRuntime", "ExecutionState", "WorkspaceBound", "make_workspace", "redact_secrets",
+    "ExecutionStore", "InMemoryExecutionStore", "JsonFileExecutionStore",
     "CollaborationHarness", "CollaborationResult", "WorkerResult", "WorkerSpec",
     "FleetStatus", "FleetWorkerPlan", "FleetWorkerStatus", "WorkerFleet",
 ]
