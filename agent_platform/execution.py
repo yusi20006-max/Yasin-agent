@@ -1,10 +1,14 @@
 """
-execution.py  Observable execution workspace boundary (Issue #26).
+execution.py — Observable execution workspace boundary (Issue #26)
+and durable recovery primitives (Issue #32).
 
 Yasin-Agent owns execution lifecycle, workspace metadata, capability
-declaration, and structured events. Yasin-MCP remains the tool
-governance and authorization boundary. YasinHub is the future
+declaration, structured events, and durable recovery. Yasin-MCP remains
+the tool governance and authorization boundary. YasinHub is the future
 observation consumer.
+
+Persistence is provider-agnostic (see persistence.py). Default behaviour
+remains pure in-memory when no store is supplied.
 
 This module does not provide shell execution, unrestricted filesystem
 access, or privilege-escalating computer-use APIs.
@@ -21,6 +25,7 @@ from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set
 
 from .state_machine import InvalidTransitionError
+from .persistence import ExecutionStore, InMemoryExecutionStore
 
 
 class ExecutionState(str, Enum):
@@ -272,6 +277,7 @@ class ExecutionRecord:
     error: Optional[str] = None
     result: Any = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    checkpoint: Optional[Dict[str, Any]] = None
     _history: List[ExecutionState] = field(
         default_factory=lambda: [ExecutionState.QUEUED]
     )
@@ -328,8 +334,55 @@ class ExecutionRecord:
             "error": self.error,
             "result": redact_secrets(self.result),
             "metadata": redact_secrets(dict(self.metadata)),
+            "checkpoint": redact_secrets(dict(self.checkpoint)) if self.checkpoint else None,
             "history": [s.value for s in self._history],
+            "cancel_requested": self._cancel_requested,
         }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ExecutionRecord":
+        if not data or "execution_id" not in data:
+            raise ValueError("invalid execution snapshot: missing execution_id")
+        status = ExecutionState(str(data.get("status") or ExecutionState.QUEUED.value))
+        ws_raw = data.get("workspace") if isinstance(data.get("workspace"), dict) else {}
+        workspace = WorkspaceBound(
+            workspace_id=str(ws_raw.get("workspace_id") or f"ws-{uuid.uuid4().hex[:12]}"),
+            path=ws_raw.get("path"),
+            scope=str(ws_raw.get("scope") or "default"),
+            metadata=dict(ws_raw.get("metadata") or {}),
+        )
+        hist_raw = data.get("history") or [status.value]
+        history = []
+        for item in hist_raw:
+            try:
+                history.append(ExecutionState(str(item)))
+            except ValueError:
+                continue
+        if not history:
+            history = [status]
+        caps = data.get("capabilities") or []
+        ck = data.get("checkpoint")
+        if ck is not None and not isinstance(ck, dict):
+            ck = {"value": ck}
+        rec = cls(
+            task_id=str(data.get("task_id") or ""),
+            execution_id=str(data["execution_id"]),
+            session_id=str(data.get("session_id") or f"sess-{uuid.uuid4().hex[:12]}"),
+            agent_id=data.get("agent_id"),
+            workspace=workspace,
+            capabilities=frozenset(str(c) for c in caps),
+            status=status,
+            created_at=float(data["created_at"]) if data.get("created_at") is not None else time.time(),
+            started_at=float(data["started_at"]) if data.get("started_at") is not None else None,
+            finished_at=float(data["finished_at"]) if data.get("finished_at") is not None else None,
+            error=data.get("error"),
+            result=data.get("result"),
+            metadata=dict(data.get("metadata") or {}),
+            checkpoint=dict(ck) if isinstance(ck, dict) else None,
+        )
+        rec._history = history
+        rec._cancel_requested = bool(data.get("cancel_requested", False))
+        return rec
 
 
 class ExecutionRuntime:
@@ -339,12 +392,22 @@ class ExecutionRuntime:
     Pause is cooperative: state moves to paused and events are emitted;
     in-flight tool calls are not preempted. True preemptive pause would
     require an async runtime and is intentionally out of scope.
+
+    When an ExecutionStore is supplied, lifecycle mutations are persisted
+    after each successful change so a new process can recover non-terminal
+    executions deterministically (Issue #32).
     """
 
-    def __init__(self, emitter: Optional[EventEmitter] = None) -> None:
+    def __init__(
+        self,
+        emitter: Optional[EventEmitter] = None,
+        store: Optional[ExecutionStore] = None,
+    ) -> None:
         self._emitter = emitter or EventEmitter()
+        self._store: Optional[ExecutionStore] = store
         self._executions: Dict[str, ExecutionRecord] = {}
         self._lock = threading.RLock()
+        self._recovered_ids: Set[str] = set()
 
     @property
     def events(self) -> EventEmitter:
@@ -377,6 +440,7 @@ class ExecutionRuntime:
                 )
             self._executions[record.execution_id] = record
         self._emit(ExecutionEventType.CREATED.value, record)
+        self._persist(record)
         return record
 
     def get(self, execution_id: str) -> Optional[ExecutionRecord]:
@@ -402,10 +466,11 @@ class ExecutionRuntime:
         record.transition(ExecutionState.RUNNING)
         self._emit(ExecutionEventType.STARTED.value, record)
         self._emit(ExecutionEventType.STATE_CHANGED.value, record)
+        self._persist(record)
         return record
 
     def pause(self, execution_id: str) -> ExecutionRecord:
-        """Cooperative pause  does not preempt an in-flight operation."""
+        """Cooperative pause — does not preempt an in-flight operation."""
         record = self._require(execution_id)
         record.transition(ExecutionState.PAUSED)
         self._emit(
@@ -414,14 +479,29 @@ class ExecutionRuntime:
             extra={"cooperative": True},
         )
         self._emit(ExecutionEventType.STATE_CHANGED.value, record)
+        self._persist(record)
         return record
 
     def resume(self, execution_id: str) -> ExecutionRecord:
-        record = self._require(execution_id)
-        record.transition(ExecutionState.RUNNING)
-        self._emit(ExecutionEventType.RESUMED.value, record)
-        self._emit(ExecutionEventType.STATE_CHANGED.value, record)
-        return record
+        try:
+            record = self._require(execution_id)
+        except KeyError:
+            record = self.recover(execution_id)
+        if record.is_terminal():
+            raise InvalidTransitionError(
+                f"cannot resume terminal execution: {record.status.value}"
+            )
+        if record.status == ExecutionState.RUNNING:
+            return record
+        if record.status in (ExecutionState.QUEUED, ExecutionState.PAUSED):
+            record.transition(ExecutionState.RUNNING)
+            self._emit(ExecutionEventType.RESUMED.value, record)
+            self._emit(ExecutionEventType.STATE_CHANGED.value, record)
+            self._persist(record)
+            return record
+        raise InvalidTransitionError(
+            f"cannot resume from status: {record.status.value}"
+        )
 
     def complete(self, execution_id: str, result: Any = None) -> ExecutionRecord:
         record = self._require(execution_id)
@@ -435,6 +515,7 @@ class ExecutionRuntime:
             extra={"success": True},
         )
         self._emit(ExecutionEventType.STATE_CHANGED.value, record)
+        self._persist(record)
         return record
 
     def fail(self, execution_id: str, error: str) -> ExecutionRecord:
@@ -451,16 +532,19 @@ class ExecutionRuntime:
             extra={"error": safe_error},
         )
         self._emit(ExecutionEventType.STATE_CHANGED.value, record)
+        self._persist(record)
         return record
 
     def cancel(self, execution_id: str) -> ExecutionRecord:
         record = self._require(execution_id)
         record.request_cancel()
         if record.is_terminal():
+            self._persist(record)
             return record
         record.transition(ExecutionState.CANCELLED)
         self._emit(ExecutionEventType.CANCELLED.value, record)
         self._emit(ExecutionEventType.STATE_CHANGED.value, record)
+        self._persist(record)
         return record
 
     def check_capability(self, execution_id: str, capability: str) -> None:
@@ -473,6 +557,89 @@ class ExecutionRuntime:
             extra={"capability": capability},
         )
         raise CapabilityDeniedError(capability, record.execution_id)
+
+    def _persist(self, record: ExecutionRecord) -> None:
+        if self._store is None:
+            return
+        try:
+            self._store.save(record.execution_id, record.as_dict())
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "execution persist failed for %s", record.execution_id
+            )
+
+    def save_checkpoint(
+        self,
+        execution_id: str,
+        checkpoint: Optional[Dict[str, Any]] = None,
+        *,
+        merge: bool = True,
+    ) -> ExecutionRecord:
+        record = self._require(execution_id)
+        if record.is_terminal():
+            raise InvalidTransitionError(
+                f"cannot checkpoint terminal execution: {record.status.value}"
+            )
+        safe = redact_secrets(checkpoint or {})
+        if not isinstance(safe, dict):
+            safe = {"value": safe}
+        if merge and isinstance(record.checkpoint, dict):
+            merged = dict(record.checkpoint)
+            merged.update(safe)
+            record.checkpoint = merged
+        else:
+            record.checkpoint = dict(safe)
+        self._emit(
+            ExecutionEventType.STATE_CHANGED.value,
+            record,
+            extra={"checkpoint": True},
+        )
+        self._persist(record)
+        return record
+
+    def recover(self, execution_id: str) -> ExecutionRecord:
+        with self._lock:
+            existing = self._executions.get(execution_id)
+            if existing is not None:
+                return existing
+        if self._store is None:
+            raise KeyError(f"unknown execution_id: {execution_id}")
+        payload = self._store.load(execution_id)
+        if payload is None:
+            raise KeyError(f"unknown execution_id: {execution_id}")
+        record = ExecutionRecord.from_dict(payload)
+        with self._lock:
+            existing = self._executions.get(execution_id)
+            if existing is not None:
+                return existing
+            self._executions[execution_id] = record
+            self._recovered_ids.add(execution_id)
+        self._emit(
+            ExecutionEventType.STATE_CHANGED.value,
+            record,
+            extra={"recovered": True},
+        )
+        return record
+
+    def recover_all(self) -> List[ExecutionRecord]:
+        if self._store is None:
+            return []
+        recovered: List[ExecutionRecord] = []
+        for eid in list(self._store.list_ids()):
+            with self._lock:
+                if eid in self._executions:
+                    continue
+            try:
+                recovered.append(self.recover(eid))
+            except (KeyError, ValueError):
+                continue
+        return recovered
+
+    def list_recoverable(self) -> List[ExecutionRecord]:
+        with self._lock:
+            items = list(self._executions.values())
+        return [r for r in items if not r.is_terminal()]
 
     def _require(self, execution_id: str) -> ExecutionRecord:
         with self._lock:
