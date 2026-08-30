@@ -254,3 +254,111 @@ def test_e2e_hub_style_orchestration(client: TestClient) -> None:
     # fleets
     fleets = client.get("/v1/fleets", headers=_auth()).json()["items"]
     assert isinstance(fleets, list)
+
+
+def test_restart_recovery_via_http(tmp_path) -> None:
+    """Hub can still get/pause after Agent process restart with durable store."""
+    from agent_platform.persistence import JsonFileExecutionStore
+
+    store = JsonFileExecutionStore(tmp_path / "exec")
+    rt1 = ExecutionRuntime(store=store)
+    app1 = create_app(runtime=rt1, service_token=TOKEN)
+    c1 = TestClient(app1)
+    r = c1.post(
+        "/v1/executions",
+        headers=_auth(),
+        json={"task_id": "recover-me", "start": True, "capabilities": ["read"]},
+    )
+    assert r.status_code == 201
+    eid = r.json()["execution_id"]
+    assert r.json()["status"] == "running"
+
+    # Simulate process restart: new runtime + app on same store
+    rt2 = ExecutionRuntime(store=store)
+    app2 = create_app(runtime=rt2, service_token=TOKEN)
+    c2 = TestClient(app2)
+
+    got = c2.get(f"/v1/executions/{eid}", headers=_auth())
+    assert got.status_code == 200
+    assert got.json()["status"] == "running"
+    assert got.json()["task_id"] == "recover-me"
+
+    paused = c2.post(f"/v1/executions/{eid}/pause", headers=_auth(), json={})
+    assert paused.status_code == 200
+    assert paused.json()["status"] == "paused"
+
+    # Events endpoint recovers record presence
+    ev = c2.get(f"/v1/executions/{eid}/events", headers=_auth())
+    assert ev.status_code == 200
+
+
+def test_create_duplicate_execution_id_409(client: TestClient, runtime: ExecutionRuntime) -> None:
+    r1 = client.post(
+        "/v1/executions",
+        headers=_auth(),
+        json={"task_id": "t", "execution_id": "exec-fixed-1"},
+    )
+    assert r1.status_code == 201
+    r2 = client.post(
+        "/v1/executions",
+        headers=_auth(),
+        json={"task_id": "t2", "execution_id": "exec-fixed-1"},
+    )
+    assert r2.status_code == 409
+
+
+def test_invalid_transition_409_after_cancel(client: TestClient) -> None:
+    r = client.post(
+        "/v1/executions",
+        headers=_auth(),
+        json={"task_id": "t-term", "start": True},
+    )
+    eid = r.json()["execution_id"]
+    assert client.post(f"/v1/executions/{eid}/cancel", headers=_auth(), json={}).status_code == 200
+    again = client.post(f"/v1/executions/{eid}/pause", headers=_auth(), json={})
+    assert again.status_code == 409
+
+
+def test_404_on_missing_after_restart(tmp_path) -> None:
+    from agent_platform.persistence import JsonFileExecutionStore
+
+    store = JsonFileExecutionStore(tmp_path / "exec")
+    rt = ExecutionRuntime(store=store)
+    app = create_app(runtime=rt, service_token=TOKEN)
+    c = TestClient(app)
+    r = c.get("/v1/executions/does-not-exist", headers=_auth())
+    assert r.status_code == 404
+
+
+def test_ready_endpoint(client: TestClient) -> None:
+    r = client.get("/v1/ready", headers=_auth())
+    assert r.status_code == 200
+    assert r.json()["ready"] is True
+
+
+def test_hub_client_retry_on_transient(monkeypatch) -> None:
+    """Lightweight Hub-side client retries transient transport failures."""
+    from agent_platform.server.hub_client import HubAgentClient
+
+    calls = {"n": 0}
+
+    class FakeResp:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+            self.headers = {"X-Request-Id": "r1"}
+
+        def json(self):
+            return self._payload
+
+    class FakeHttp:
+        def request(self, method, url, **kwargs):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise ConnectionError("temporary")
+            return FakeResp(200, {"status": "healthy", "service": "yasin-agent"})
+
+    client = HubAgentClient(base_url="http://127.0.0.1:8080", token=TOKEN, http=FakeHttp(), max_retries=3)
+    body = client.health()
+    assert body["status"] == "healthy"
+    assert calls["n"] == 3

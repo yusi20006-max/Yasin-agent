@@ -3,6 +3,8 @@
 Endpoint map (YasinHub HttpAgentRuntimeAdapter):
 
 GET  /v1/health
+GET  /v1/ready
+POST /v1/executions
 GET  /v1/executions
 GET  /v1/executions/{execution_id}
 GET  /v1/executions/{execution_id}/events
@@ -91,6 +93,16 @@ def create_app(
     def _event_dict(event) -> Dict[str, Any]:
         return event.as_dict()
 
+    def _get_or_recover(execution_id: str):
+        """In-memory first; then durable store recovery (Hub restart path)."""
+        rec = rt.get(execution_id)
+        if rec is not None:
+            return rec
+        try:
+            return rt.recover(execution_id)
+        except (KeyError, ValueError):
+            return None
+
     def _fleet_from_task(task_id: str) -> Optional[Dict[str, Any]]:
         items = rt.list_executions(task_id=task_id)
         if not items:
@@ -144,7 +156,7 @@ def create_app(
                     status, payload = app.state.idempotency[cache_key]
                     return JSONResponse(status_code=status, content=payload, headers={"X-Request-Id": request_id})
 
-        rec = rt.get(execution_id)
+        rec = _get_or_recover(execution_id)
         if rec is None:
             raise HTTPException(status_code=404, detail=f"execution not found: {execution_id}")
         try:
@@ -265,7 +277,7 @@ def create_app(
 
     @app.get("/v1/executions/{execution_id}")
     def get_execution(execution_id: str, request_id: str = Depends(_auth)) -> JSONResponse:
-        rec = rt.get(execution_id)
+        rec = _get_or_recover(execution_id)
         if rec is None:
             raise HTTPException(status_code=404, detail=f"execution not found: {execution_id}")
         return JSONResponse(content=_record_dict(rec), headers={"X-Request-Id": request_id})
@@ -277,7 +289,7 @@ def create_app(
         event_type: Optional[str] = Query(default=None),
         limit: Optional[int] = Query(default=None),
     ) -> JSONResponse:
-        if rt.get(execution_id) is None:
+        if _get_or_recover(execution_id) is None:
             raise HTTPException(status_code=404, detail=f"execution not found: {execution_id}")
         events = rt.events.history(execution_id=execution_id)
         if event_type:
