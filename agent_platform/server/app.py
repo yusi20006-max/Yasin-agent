@@ -31,7 +31,7 @@ from agent_platform.execution import ExecutionRuntime, ExecutionState, redact_se
 from agent_platform.state_machine import InvalidTransitionError
 
 try:
-    from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
+    from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, Response
     from fastapi.responses import JSONResponse
     from pydantic import BaseModel, Field
 except ImportError as exc:  # pragma: no cover - exercised by core-import test
@@ -187,6 +187,68 @@ def create_app(
             "uptime_seconds": round(time.time() - app.state.started_at, 3),
         }
         return JSONResponse(content=payload, headers={"X-Request-Id": request_id})
+
+    @app.get("/v1/ready")
+    def ready(request_id: str = Depends(_auth)) -> JSONResponse:
+        """Readiness: process is up and runtime is usable."""
+        payload = {
+            "status": "ready",
+            "service": "yasin-agent",
+            "ready": True,
+        }
+        return JSONResponse(content=payload, headers={"X-Request-Id": request_id})
+
+    @app.post("/v1/executions")
+    def create_execution(
+        body: Dict[str, Any] = Body(default_factory=dict),
+        request_id: str = Depends(_auth),
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    ) -> JSONResponse:
+        """Create an execution via ExecutionRuntime.create()."""
+        path = "/v1/executions"
+        if idempotency_key:
+            cache_key = ("POST", path, idempotency_key)
+            with app.state.idem_lock:
+                if cache_key in app.state.idempotency:
+                    status, payload = app.state.idempotency[cache_key]
+                    return JSONResponse(
+                        status_code=status,
+                        content=payload,
+                        headers={"X-Request-Id": request_id},
+                    )
+        task_id = body.get("task_id")
+        if not task_id or not isinstance(task_id, str):
+            raise HTTPException(status_code=400, detail="task_id is required")
+        session_id = body.get("session_id")
+        agent_id = body.get("agent_id")
+        capabilities = body.get("capabilities")
+        metadata = body.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        execution_id = body.get("execution_id")
+        start = bool(body.get("start", False))
+        try:
+            rec = rt.create(
+                task_id=task_id,
+                session_id=session_id,
+                agent_id=agent_id,
+                capabilities=capabilities,
+                metadata=metadata,
+                execution_id=execution_id,
+            )
+            if start:
+                rec = rt.start(rec.execution_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        payload = _record_dict(rec)
+        if idempotency_key:
+            with app.state.idem_lock:
+                app.state.idempotency[("POST", path, idempotency_key)] = (201, payload)
+        return JSONResponse(
+            status_code=201,
+            content=payload,
+            headers={"X-Request-Id": request_id},
+        )
 
     @app.get("/v1/executions")
     def list_executions(

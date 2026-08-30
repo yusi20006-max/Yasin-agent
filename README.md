@@ -163,3 +163,66 @@ python -m agent_platform.cli agent run news_bot
 | YasinHub | Status/health reporting CLI |
 | Yasin-cli | Unified operator command surface (target) |
 | YasinRelay / Feed / Press | Domain content pipelines |
+
+
+---
+
+## Persistent Jobs & Scheduling (Issue #33)
+
+```python
+from agent_platform import ExecutionRuntime, JobScheduler, ScheduleSpec, RetryPolicy
+from agent_platform.jobs import InMemoryJobStore
+from agent_platform.persistence import InMemoryExecutionStore
+
+rt = ExecutionRuntime(store=InMemoryExecutionStore())
+sched = JobScheduler(rt, store=InMemoryJobStore())
+job = sched.create_job(
+    task_id="nightly",
+    schedule=ScheduleSpec(immediate=True),
+    retry=RetryPolicy(max_attempts=3, backoff_seconds=1.0),
+    run_immediately=True,
+)
+# When execution finishes:
+# sched.on_execution_terminal(job.execution_id, success=True)
+```
+
+See [docs/JOBS_AND_SCHEDULING.md](docs/JOBS_AND_SCHEDULING.md).
+
+## Layered Memory & Agent Loadout (Issue #34)
+
+```python
+from agent_platform import LayeredMemoryManager, MemoryLayer
+mm = LayeredMemoryManager()
+asset = mm.add_memory("fact", layer=MemoryLayer.L1_ATOM)
+lo = mm.create_loadout("agent-1")
+mm.attach_memory(lo.loadout_id, asset.asset_id, allow_read=True)
+mm.get_memory(asset.asset_id, agent_id="agent-1")
+```
+
+## Yasin-AI Capability Boundary (Issue #35)
+
+```python
+from agent_platform import CapabilityClient, CapabilityRequest, CapabilityName, MockCapabilityProvider
+client = CapabilityClient(MockCapabilityProvider())
+resp = client.invoke(CapabilityRequest(capability=CapabilityName.INFERENCE, input="hi"))
+```
+
+## Research Boundary (Issue #36)
+
+```python
+from agent_platform import ResearchClient, ResearchRequest, MockResearchProvider
+client = ResearchClient(MockResearchProvider())
+result = client.search(ResearchRequest(query="yasin"))
+```
+
+## HTTP create execution (YasinHub E2E)
+
+```http
+POST /v1/executions
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{"task_id": "t1", "start": true, "capabilities": ["read"]}
+```
+
+Also: `GET /v1/ready` readiness probe.

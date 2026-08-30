@@ -182,3 +182,75 @@ def test_filter_executions_by_status(client: TestClient, runtime: ExecutionRunti
     ids = {i["execution_id"] for i in r.json()["items"]}
     assert running.execution_id in ids
     assert queued.execution_id not in ids
+
+
+def test_create_execution_endpoint(client: TestClient, runtime: ExecutionRuntime) -> None:
+    r = client.post(
+        "/v1/executions",
+        headers=_auth(**{"Idempotency-Key": "idem-create-1"}),
+        json={
+            "task_id": "hub-task-1",
+            "agent_id": "agent-hub",
+            "capabilities": ["read", "research"],
+            "metadata": {"source": "hub"},
+            "start": True,
+        },
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["task_id"] == "hub-task-1"
+    assert body["status"] == "running"
+    assert body["agent_id"] == "agent-hub"
+    eid = body["execution_id"]
+
+    # Idempotent replay
+    r2 = client.post(
+        "/v1/executions",
+        headers=_auth(**{"Idempotency-Key": "idem-create-1"}),
+        json={"task_id": "hub-task-1", "start": True},
+    )
+    assert r2.status_code == 201
+    assert r2.json()["execution_id"] == eid
+
+    # Get / events / pause / resume / cancel
+    assert client.get(f"/v1/executions/{eid}", headers=_auth()).status_code == 200
+    assert client.get(f"/v1/executions/{eid}/events", headers=_auth()).status_code == 200
+    assert client.post(f"/v1/executions/{eid}/pause", headers=_auth(), json={}).status_code == 200
+    assert client.post(f"/v1/executions/{eid}/resume", headers=_auth(), json={}).status_code == 200
+    assert client.post(f"/v1/executions/{eid}/cancel", headers=_auth(), json={}).status_code == 200
+    final = client.get(f"/v1/executions/{eid}", headers=_auth()).json()
+    assert final["status"] == "cancelled"
+
+
+def test_create_requires_task_id(client: TestClient) -> None:
+    r = client.post("/v1/executions", headers=_auth(), json={})
+    assert r.status_code == 400
+
+
+def test_create_401(client: TestClient) -> None:
+    r = client.post("/v1/executions", json={"task_id": "x"})
+    assert r.status_code == 401
+
+
+def test_e2e_hub_style_orchestration(client: TestClient) -> None:
+    """Simulates YasinHub HttpAgentRuntimeAdapter flow."""
+    # health
+    assert client.get("/v1/health", headers=_auth()).status_code == 200
+    # create
+    r = client.post(
+        "/v1/executions",
+        headers=_auth(**{"X-Request-Id": "hub-req-1"}),
+        json={"task_id": "orch-1", "start": True, "capabilities": ["read"]},
+    )
+    assert r.status_code == 201
+    assert r.headers.get("X-Request-Id") == "hub-req-1"
+    eid = r.json()["execution_id"]
+    # list
+    items = client.get("/v1/executions", headers=_auth()).json()["items"]
+    assert any(i["execution_id"] == eid for i in items)
+    # events
+    ev = client.get("/v1/events", headers=_auth()).json()["items"]
+    assert len(ev) >= 1
+    # fleets
+    fleets = client.get("/v1/fleets", headers=_auth()).json()["items"]
+    assert isinstance(fleets, list)

@@ -55,6 +55,53 @@ from .harness import (
     WorkerResult,
     WorkerSpec,
 )
+
+
+
+from .ai_capability import (
+    CapabilityName,
+    CapabilityErrorCode,
+    CapabilityRequest,
+    CapabilityResponse,
+    CapabilityProvider,
+    MockCapabilityProvider,
+    CapabilityClient,
+)
+from .research import (
+    ResearchErrorCode,
+    ResearchSource,
+    ResearchRequest,
+    ResearchResult,
+    ResearchProvider,
+    MockResearchProvider,
+    ResearchClient,
+)
+
+from .memory import (
+    MemoryLayer,
+    AssetType,
+    MemoryAsset,
+    LoadoutBinding,
+    AgentLoadout,
+    MemoryAccessDenied,
+    MemoryStore,
+    InMemoryMemoryStore,
+    JsonFileMemoryStore,
+    LayeredMemoryManager,
+)
+
+from .jobs import (
+    JobState,
+    JobEventType,
+    RetryPolicy,
+    ScheduleSpec,
+    JobRecord,
+    JobStore,
+    InMemoryJobStore,
+    JsonFileJobStore,
+    JobScheduler,
+)
+
 from .fleet import (
     FleetStatus,
     FleetWorkerPlan,
@@ -83,6 +130,16 @@ __all__ = [
     "ExecutionStore", "InMemoryExecutionStore", "JsonFileExecutionStore",
     "CollaborationHarness", "CollaborationResult", "WorkerResult", "WorkerSpec",
     "FleetStatus", "FleetWorkerPlan", "FleetWorkerStatus", "WorkerFleet",
+    "JobState", "JobEventType", "RetryPolicy", "ScheduleSpec",
+    "JobRecord", "JobStore", "InMemoryJobStore", "JsonFileJobStore", "JobScheduler",
+    "MemoryLayer", "AssetType", "MemoryAsset", "LoadoutBinding",
+    "AgentLoadout", "MemoryAccessDenied", "MemoryStore",
+    "InMemoryMemoryStore", "JsonFileMemoryStore", "LayeredMemoryManager",
+    "CapabilityName", "CapabilityErrorCode", "CapabilityRequest",
+    "CapabilityResponse", "CapabilityProvider", "MockCapabilityProvider",
+    "CapabilityClient",
+    "ResearchErrorCode", "ResearchSource", "ResearchRequest", "ResearchResult",
+    "ResearchProvider", "MockResearchProvider", "ResearchClient",
 ]
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
