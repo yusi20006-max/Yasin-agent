@@ -1,173 +1,109 @@
-# agent_platform (Yasin-Agent) — v1.0.0 Stable
+# yasin-agent (Yasin-Agent) — v1.1.0
 
-Independent multi-step agent execution package for the **Yasin ecosystem**.
+Independent multi-step agent **execution runtime** for the **Yasin ecosystem**.
 
-According to YASIN-DOCS ADR-001:
+| Component | Role |
+|-----------|------|
+| **Yasin-Agent** | Planning, workflow, tools, sessions, execution, jobs, memory/loadout |
+| **Yasin-Core** | Generic runtime/SDK foundation (optional adapter) |
+| **Yasin-AI** | Canonical AI platform — Agent uses capability contracts only |
+| **YasinHub** | Orchestration / observation over authenticated HTTP |
 
-- **Yasin-Agent** owns agent planning, workflow, tools, sessions, and execution semantics.
-- **Yasin-Core** is the generic runtime/SDK foundation (this package integrates via adapter).
-- **Yasin-AI** is the canonical shared AI capability platform — consumers use only public contracts (`yasinai.contracts` / `yasinai.services`). Optional generation/memory via Yasin-AI is tracked in issue **#19** and is **DEFERRED** until needed.
-
-This repository is **not** a submodule or component of Yasin-AI. It provides the agent layer between agent definitions, workflow, tools, plugins, memory/context, and the Yasin-Core SDK.
-
-Design goal: full independence of the processing layer from CLI or network transport (transport-agnostic), so a web layer (e.g. FastAPI) can sit on top cleanly.
-
----
-
-## Key features (v1.0 Stable)
-
-- **Agent Definition Layer**: structured agents with metadata, model/tech config, persona/profile, and advanced prompt templates (`PromptHandler`).
-- **Workflow / Planner**: sequential plans via `TemplatePlanner` and managed task state lifecycle (`StateMachine`).
-- **Executor**: step-by-step execution with output validators and retries.
-- **Tool System**: dynamic registration/invocation with signature adaptation (`ToolRunner`); tools registered into the Core SDK client.
-- **Plugin System**: auto-discovery from configured directories; register/run via Yasin-Core SDK client.
-- **Memory & Context**: isolated, thread-aware contexts (`ContextManager`) and short/long-term memory spaces (`MemoryManager`).
-- **Session Handling**: interactive sessions with isolated context/memory (`SessionManager`).
-- **SDK adapter**: `YasinCoreAgentAdapter` maps platform agents to valid Yasin-Core agents.
+Design goal: core runtime works **without** FastAPI, external AI, or network research providers.
 
 ---
 
-## Package layout
+## Requirements
 
-```
-agent_platform/
-├── agent_platform/
-│   ├── __init__.py          # version + public exports
-│   ├── agent_definition.py  # Metadata, Config, Profile, PromptHandler
-│   ├── agent_registry.py    # agent registration
-│   ├── task.py              # Task, TaskResult, StepResult
-│   ├── state_machine.py     # PENDING → PLANNING → RUNNING → SUCCEEDED/FAILED
-│   ├── planner.py           # Step, TemplatePlanner
-│   ├── executor.py          # sequential steps + retry + validation
-│   ├── tool_runner.py       # tool registry and invocation
-│   ├── memory_context.py    # memory, context, isolated sessions
-│   ├── execution.py         # observable execution workspace boundary (#26)
-│   ├── integration.py       # Yasin-Core SDK adapter + fallback
-│   ├── server/              # optional HTTP adapter for YasinHub (#38)
-│   └── cli.py               # CLI helpers
-├── tests/
-├── conftest.py
-└── README.md
-```
+- Python **3.9 – 3.13**
+- Core: `click`
+- Server (optional): `fastapi`, `uvicorn`
+- Tests: `pytest`, `httpx` (+ server extras for HTTP tests)
 
 ---
 
-See [docs/EXECUTION_WORKSPACE_BOUNDARY.md](docs/EXECUTION_WORKSPACE_BOUNDARY.md) (Issue #26).
-
-## Local install and tests
+## Install
 
 ```bash
-pip install pytest click
-# optional: editable install of Yasin-Core if integrating against a real SDK
-pytest tests/ -v
+# Core only
+pip install -e .
+
+# With HTTP server (YasinHub)
+pip install -e ".[server]"
+
+# Tests
+pip install -e ".[test-server]"
+pytest tests/ -q
 ```
 
-## HTTP runtime adapter (YasinHub)
+Clean clone → install → test must succeed with no personal secrets or machine paths.
 
-Optional authenticated HTTP surface over `ExecutionRuntime` for YasinHub:
+---
 
-```sh
-pip install 'yasin-agent[server]'
+## Configuration
+
+| Variable | Purpose |
+|----------|---------|
+| `YASIN_AGENT_SERVICE_TOKEN` | Shared bearer token for Hub ↔ Agent HTTP |
+| `YASINHUB_AGENT_BASE_URL` | Hub-side base URL (e.g. `http://127.0.0.1:8080`) |
+| `YASINHUB_AGENT_SERVICE_TOKEN` | Same shared secret on Hub |
+
+Never commit tokens. Prefer environment or secret manager.
+
+---
+
+## Run HTTP server
+
+```bash
 export YASIN_AGENT_SERVICE_TOKEN=shared-secret
 python -m agent_platform.server
+# or: yasin-agent-server
 ```
 
-YasinHub:
+Health: `GET /v1/health` with `Authorization: Bearer shared-secret`.
 
-```sh
+---
+
+## YasinHub integration
+
+```bash
 export YASINHUB_AGENT_BASE_URL=http://127.0.0.1:8080
 export YASINHUB_AGENT_SERVICE_TOKEN=shared-secret
 ```
 
-See [docs/HTTP_RUNTIME_ADAPTER.md](docs/HTTP_RUNTIME_ADAPTER.md) (Issue #38).
+Hub flow: create execution → poll status/events → pause/resume/cancel → fleets.
 
----
+See [docs/HUB_AGENT_E2E.md](docs/HUB_AGENT_E2E.md) and [docs/HTTP_RUNTIME_ADAPTER.md](docs/HTTP_RUNTIME_ADAPTER.md).
 
-## Examples
-
-### 1. Simple workflow
+Python helper:
 
 ```python
-from agent_platform import TemplatePlanner, ToolRunner, Task, Executor, Step
-
-tool_runner = ToolRunner()
-tool_runner.register("fetch", lambda context, previous_output=None, **_: "raw-news")
-tool_runner.register("translate", lambda context, previous_output=None, **_: f"fa({previous_output})")
-
-planner = TemplatePlanner()
-planner.register_template("read_translate", [
-    Step(name="fetch", tool="fetch"),
-    Step(name="translate", tool="translate"),
-])
-
-task = Task(name="demo", goal="read_translate")
-result = Executor(tool_runner).run(task, planner.plan("read_translate"))
-
-print(result.summary())
-print("final:", result.output)  # fa(raw-news)
+from agent_platform.server.hub_client import HubAgentClient
+client = HubAgentClient(base_url="http://127.0.0.1:8080", token="shared-secret")
+client.health()
+rec = client.create_execution("task-1", start=True, capabilities=["read"])
 ```
 
-### 2. Sessions and isolated memory
+---
+
+## Persistence & recovery
+
+Optional stores: in-memory (default) or JSON directory.
 
 ```python
-from agent_platform import SessionManager
+from agent_platform import ExecutionRuntime
+from agent_platform.persistence import JsonFileExecutionStore
 
-session_mgr = SessionManager()
-session = session_mgr.create_session("session_1001", {"user": "ali"})
-session.save_short_term("selected_topic", "AI Technologies")
-session.save_long_term("theme_preference", "dark")
-
-print(session.get_short_term("selected_topic"), session.get_long_term("theme_preference"))
-
-with session.run_with_context():
-    pass  # get_current_context() available inside
+rt = ExecutionRuntime(store=JsonFileExecutionStore("/var/lib/yasin/executions"))
+# After restart:
+rt.recover_all()
 ```
 
-### 3. Integration with Yasin-Core SDK
-
-```python
-from yasin_core.sdk import YasinCoreClient
-from agent_platform import AgentRegistry, TemplatePlanner, ToolRunner, register_all_agents
-
-agent_registry = AgentRegistry()
-planner = TemplatePlanner()
-tool_runner = ToolRunner()
-client = YasinCoreClient()
-
-register_all_agents(client, agent_registry, planner, tool_runner)
-
-task = client.create_task(id="task-001", name="news_bot")
-executed_task = client.execute_task(task)
-print("status:", executed_task.status)
-```
+Docs: [docs/DURABLE_EXECUTION.md](docs/DURABLE_EXECUTION.md)
 
 ---
 
-## CLI
-
-```bash
-python -m agent_platform.cli agent run news_bot
-```
-
-`register_cli_command(cli_app)` attaches `agent run` to click/argparse-style CLIs when present.
-
----
-
-## Ecosystem boundaries
-
-| Project | Role |
-|---------|------|
-| Yasin-Core | Runtime/SDK foundation |
-| Yasin-AI | Shared AI contracts (optional for Agent — #19 deferred) |
-| **Yasin-Agent (this repo)** | Planning, workflow, tools, sessions |
-| YasinHub | Status/health reporting CLI |
-| Yasin-cli | Unified operator command surface (target) |
-| YasinRelay / Feed / Press | Domain content pipelines |
-
-
----
-
-## Persistent Jobs & Scheduling (Issue #33)
+## Scheduling (jobs)
 
 ```python
 from agent_platform import ExecutionRuntime, JobScheduler, ScheduleSpec, RetryPolicy
@@ -175,31 +111,24 @@ from agent_platform.jobs import InMemoryJobStore
 from agent_platform.persistence import InMemoryExecutionStore
 
 rt = ExecutionRuntime(store=InMemoryExecutionStore())
-sched = JobScheduler(rt, store=InMemoryJobStore())
-job = sched.create_job(
-    task_id="nightly",
-    schedule=ScheduleSpec(immediate=True),
-    retry=RetryPolicy(max_attempts=3, backoff_seconds=1.0),
-    run_immediately=True,
-)
-# When execution finishes:
-# sched.on_execution_terminal(job.execution_id, success=True)
+sched = JobScheduler(rt, store=InMemoryJobStore(), max_concurrent=4)
+job = sched.create_job(task_id="nightly", retry=RetryPolicy(max_attempts=3), run_immediately=True)
 ```
 
-See [docs/JOBS_AND_SCHEDULING.md](docs/JOBS_AND_SCHEDULING.md).
+Docs: [docs/JOBS_AND_SCHEDULING.md](docs/JOBS_AND_SCHEDULING.md)
 
-## Layered Memory & Agent Loadout (Issue #34)
+---
 
-```python
-from agent_platform import LayeredMemoryManager, MemoryLayer
-mm = LayeredMemoryManager()
-asset = mm.add_memory("fact", layer=MemoryLayer.L1_ATOM)
-lo = mm.create_loadout("agent-1")
-mm.attach_memory(lo.loadout_id, asset.asset_id, allow_read=True)
-mm.get_memory(asset.asset_id, agent_id="agent-1")
-```
+## Memory & Agent Loadout
 
-## Yasin-AI Capability Boundary (Issue #35)
+Layers: **L0** Conversation · **L1** Atom · **L2** Scenario · **L3** Core/Persona  
+Loadout ACL binds memory/skills/capabilities per agent.
+
+Docs: [docs/MEMORY_AND_LOADOUT.md](docs/MEMORY_AND_LOADOUT.md)
+
+---
+
+## Yasin-AI capability boundary
 
 ```python
 from agent_platform import CapabilityClient, CapabilityRequest, CapabilityName, MockCapabilityProvider
@@ -207,7 +136,13 @@ client = CapabilityClient(MockCapabilityProvider())
 resp = client.invoke(CapabilityRequest(capability=CapabilityName.INFERENCE, input="hi"))
 ```
 
-## Research Boundary (Issue #36)
+Docs: [docs/YASIN_AI_CAPABILITY.md](docs/YASIN_AI_CAPABILITY.md)
+
+---
+
+## Research boundary
+
+Explicit capability — not unrestricted network.
 
 ```python
 from agent_platform import ResearchClient, ResearchRequest, MockResearchProvider
@@ -215,14 +150,50 @@ client = ResearchClient(MockResearchProvider())
 result = client.search(ResearchRequest(query="yasin"))
 ```
 
-## HTTP create execution (YasinHub E2E)
+Docs: [docs/RESEARCH_BOUNDARY.md](docs/RESEARCH_BOUNDARY.md)
 
-```http
-POST /v1/executions
-Authorization: Bearer <token>
-Content-Type: application/json
+---
 
-{"task_id": "t1", "start": true, "capabilities": ["read"]}
+## Observability & security
+
+- Metrics / diagnostics: [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md)
+- Auth, isolation, validation: [docs/SECURITY.md](docs/SECURITY.md)
+
+---
+
+## Package layout
+
+```
+agent_platform/
+  execution.py      # ExecutionRuntime lifecycle + recovery
+  persistence.py    # ExecutionStore backends
+  jobs.py           # JobScheduler
+  memory.py         # Layered memory + loadout
+  ai_capability.py  # Yasin-AI contract
+  research.py       # Research boundary
+  observability.py  # Metrics / diagnostics
+  security.py       # Validation / isolation helpers
+  server/           # Optional FastAPI adapter + hub_client
+tests/
+docs/
 ```
 
-Also: `GET /v1/ready` readiness probe.
+---
+
+## Production deployment (summary)
+
+1. Python 3.9+ on host or container  
+2. `pip install 'yasin-agent[server]'`  
+3. Set `YASIN_AGENT_SERVICE_TOKEN`  
+4. Mount durable store path if required  
+5. Run behind TLS reverse proxy  
+6. Probe `/v1/health` and `/v1/ready`  
+7. Point YasinHub at the service URL with the same token  
+
+See [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) and [CHANGELOG.md](CHANGELOG.md).
+
+---
+
+## License / ecosystem
+
+Part of the Yasin AI Ecosystem. Agent does **not** replace Yasin-AI.

@@ -2,21 +2,28 @@
 
 ## 1.1.0 — 2026-08-30
 
+Production-ready execution runtime integrated with YasinHub.
+
 ### Added
-- **#33** Persistent Jobs + Scheduling (`JobScheduler`, `JobRecord`, stores, retries, recurrence)
-- **#34** Layered Memory + Agent Loadout (`LayeredMemoryManager`, L0–L3, ACL bindings)
-- **#35** Yasin-AI capability contract (`CapabilityClient`, mock provider, execution association)
-- **#36** Research / information-access boundary (`ResearchClient`, mock provider, ACL)
-- **#41** HTTP `POST /v1/executions` create endpoint + E2E orchestration tests
-- **#42** Observability helpers (`RuntimeMetrics`, correlation context, `/v1/ready`)
-- **#43** Security regression tests (auth, redaction, ACL, isolation)
-- **#44** Packaging/docs refresh for production readiness
+- **#33** Persistent Jobs + Scheduling (`JobScheduler`, retry, recurrence, `max_concurrent`)
+- **#34** Layered Memory + Agent Loadout (L0–L3, ACL, skills)
+- **#35** Yasin-AI capability contract (`CapabilityClient`, mock/configurable providers)
+- **#36** Research information-access boundary (`ResearchClient`, registry, ToolRunner hook)
+- **#41** Hub ↔ Agent E2E (`POST /v1/executions`, durable recover on GET/control, `HubAgentClient`)
+- **#42** Observability (`RuntimeMetrics`, `/v1/metrics`, diagnostics, health with metrics)
+- **#43** Security hardening (`security.py`, validation, body limits, isolation tests)
+- **#44** Packaging, README, release checklist for 1.1.0
 
 ### Verified
-- #32 Durable execution / recovery (17 tests)
-- Full suite: 177+ tests green
-- Python 3.9–3.13 compatible design (no 3.10+ only syntax in core paths)
+- **#32** Durable execution / recovery
+- CI matrix Python 3.9–3.13
+- Core runtime usable without server/AI/research providers
 
-### Notes
-- Core runtime remains usable without FastAPI, Yasin-AI, or network research providers.
-- Secrets are redacted in persistence snapshots and log extras.
+### Security
+- Bearer auth with constant-time compare
+- Secret redaction in events, snapshots, diagnostics
+- No secrets in repository
+
+## 1.0.0
+
+Initial stable surface: execution runtime, HTTP adapter (#38), fleets, harness.
