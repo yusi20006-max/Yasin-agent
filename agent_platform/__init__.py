@@ -65,6 +65,7 @@ from .ai_capability import (
     CapabilityResponse,
     CapabilityProvider,
     MockCapabilityProvider,
+    ConfigurableCapabilityProvider,
     CapabilityClient,
 )
 from .research import (
@@ -137,7 +138,7 @@ __all__ = [
     "AgentLoadout", "MemoryAccessDenied", "MemoryStore",
     "InMemoryMemoryStore", "JsonFileMemoryStore", "LayeredMemoryManager",
     "CapabilityName", "CapabilityErrorCode", "CapabilityRequest",
-    "CapabilityResponse", "CapabilityProvider", "MockCapabilityProvider",
+    "CapabilityResponse", "CapabilityProvider", "MockCapabilityProvider", "ConfigurableCapabilityProvider",
     "CapabilityClient",
     "ResearchErrorCode", "ResearchSource", "ResearchRequest", "ResearchResult",
     "ResearchProvider", "MockResearchProvider", "ResearchClient",

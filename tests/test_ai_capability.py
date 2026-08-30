@@ -9,6 +9,7 @@ from agent_platform.ai_capability import (
     CapabilityErrorCode,
     CapabilityName,
     CapabilityRequest,
+    ConfigurableCapabilityProvider,
     MockCapabilityProvider,
 )
 from agent_platform.execution import ExecutionRuntime
@@ -126,3 +127,79 @@ def test_secret_redaction_in_request():
     )
     d = req.as_dict()
     assert d["metadata"]["api_key"] == "***"
+
+
+def test_timeout_normalized():
+    client = CapabilityClient(MockCapabilityProvider(delay=0.05), max_retries=0)
+    resp = client.invoke(
+        CapabilityRequest(
+            capability=CapabilityName.INFERENCE,
+            input="x",
+            timeout_seconds=0.01,
+        )
+    )
+    assert not resp.success
+    assert resp.error_code == CapabilityErrorCode.TIMEOUT.value
+
+
+def test_configurable_provider_name_and_model():
+    provider = ConfigurableCapabilityProvider(provider="yasin-ai", model="cap-v1")
+    client = CapabilityClient(provider)
+    resp = client.invoke(
+        CapabilityRequest(capability=CapabilityName.SUMMARIZATION, input="abc")
+    )
+    assert resp.success
+    assert resp.provider == "yasin-ai"
+    assert resp.model == "cap-v1"
+
+
+def test_loadout_denies_capability():
+    from agent_platform.memory import LayeredMemoryManager
+
+    mm = LayeredMemoryManager()
+    mm.create_loadout("agent-ai", capabilities=["summarization"])
+    client = CapabilityClient(MockCapabilityProvider(), memory_manager=mm)
+    denied = client.invoke(
+        CapabilityRequest(
+            capability=CapabilityName.INFERENCE,
+            input="x",
+            agent_id="agent-ai",
+        )
+    )
+    assert not denied.success
+    assert denied.error_code == CapabilityErrorCode.UNAUTHORIZED.value
+    ok = client.invoke(
+        CapabilityRequest(
+            capability=CapabilityName.SUMMARIZATION,
+            input="x",
+            agent_id="agent-ai",
+        )
+    )
+    assert ok.success
+
+
+def test_retry_then_success():
+    class Flaky(MockCapabilityProvider):
+        def __init__(self):
+            super().__init__()
+            self.n = 0
+
+        def invoke(self, request):
+            self.n += 1
+            if self.n == 1:
+                raise RuntimeError("transient")
+            return super().invoke(request)
+
+    client = CapabilityClient(Flaky(), max_retries=1)
+    resp = client.invoke(CapabilityRequest(capability=CapabilityName.INFERENCE, input="x"))
+    assert resp.success
+
+
+def test_core_runtime_without_capability_client():
+    from agent_platform.execution import ExecutionRuntime, ExecutionState
+
+    rt = ExecutionRuntime()
+    rec = rt.create(task_id="solo")
+    rt.start(rec.execution_id)
+    rt.complete(rec.execution_id)
+    assert rt.get(rec.execution_id).status == ExecutionState.SUCCEEDED

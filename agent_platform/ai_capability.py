@@ -169,6 +169,28 @@ class MockCapabilityProvider(CapabilityProvider):
         )
 
 
+class ConfigurableCapabilityProvider(MockCapabilityProvider):
+    """Named provider/model wrapper. Still in-process; no network."""
+
+    def __init__(
+        self,
+        *,
+        provider: str = "yasin-ai",
+        model: str = "default",
+        fail: bool = False,
+        delay: float = 0.0,
+    ) -> None:
+        super().__init__(fail=fail, delay=delay)
+        self.name = provider
+        self.model = model
+
+    def invoke(self, request: CapabilityRequest) -> CapabilityResponse:
+        resp = super().invoke(request)
+        resp.provider = self.name
+        resp.model = self.model
+        return resp
+
+
 class CapabilityClient:
     """
     Stable contract boundary used by the agent runtime.
@@ -190,6 +212,7 @@ class CapabilityClient:
         default_timeout: float = 30.0,
         max_retries: int = 1,
         allowed_capabilities: Optional[Sequence[str]] = None,
+        memory_manager: Any = None,
     ) -> None:
         self._provider = provider or MockCapabilityProvider()
         self._runtime = runtime
@@ -197,6 +220,7 @@ class CapabilityClient:
         self._default_timeout = default_timeout
         self._max_retries = max(0, max_retries)
         self._allowed = set(allowed_capabilities) if allowed_capabilities else None
+        self._memory = memory_manager
         self._lock = threading.Lock()
         self._call_count = 0
 
@@ -206,6 +230,42 @@ class CapabilityClient:
 
     def invoke(self, request: CapabilityRequest) -> CapabilityResponse:
         start = time.time()
+        cap = (
+            request.capability.value
+            if isinstance(request.capability, CapabilityName)
+            else str(request.capability)
+        )
+        if request.timeout_seconds is None or request.timeout_seconds <= 0:
+            request.timeout_seconds = self._default_timeout
+
+        if request.capability is None or cap == "":
+            resp = CapabilityResponse(
+                request_id=request.request_id,
+                capability=cap or "unknown",
+                success=False,
+                error_code=CapabilityErrorCode.INVALID_REQUEST.value,
+                error_message="capability is required",
+                provider=self.provider_name,
+            )
+            self._emit(request, resp, start)
+            return resp
+
+        # Loadout gate: if a memory manager is bound and agent_id is set,
+        # the capability must be listed on the active loadout.
+        if self._memory is not None and request.agent_id:
+            lo = self._memory.get_active_loadout(request.agent_id)
+            if lo is not None and lo.capabilities and not lo.allows_capability(cap):
+                resp = CapabilityResponse(
+                    request_id=request.request_id,
+                    capability=cap,
+                    success=False,
+                    error_code=CapabilityErrorCode.UNAUTHORIZED.value,
+                    error_message=f"loadout denies capability: {cap}",
+                    provider=self.provider_name,
+                )
+                self._emit(request, resp, start)
+                return resp
+
         if self._allowed is not None:
             cap = (
                 request.capability.value
@@ -249,8 +309,19 @@ class CapabilityClient:
                 # Soft timeout: provider should respect request.timeout_seconds;
                 # we still measure and tag.
                 resp = self._provider.invoke(request)
+                elapsed = time.time() - start
                 if resp.latency_ms is None:
-                    resp.latency_ms = (time.time() - start) * 1000
+                    resp.latency_ms = elapsed * 1000
+                if elapsed > request.timeout_seconds:
+                    resp = CapabilityResponse(
+                        request_id=request.request_id,
+                        capability=cap,
+                        success=False,
+                        error_code=CapabilityErrorCode.TIMEOUT.value,
+                        error_message=f"capability timed out after {elapsed:.3f}s",
+                        provider=self.provider_name,
+                        latency_ms=elapsed * 1000,
+                    )
                 if resp.success or attempt >= attempts:
                     with self._lock:
                         self._call_count += 1
@@ -317,5 +388,6 @@ __all__ = [
     "CapabilityResponse",
     "CapabilityProvider",
     "MockCapabilityProvider",
+    "ConfigurableCapabilityProvider",
     "CapabilityClient",
 ]
