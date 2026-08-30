@@ -75,6 +75,7 @@ from .research import (
     ResearchResult,
     ResearchProvider,
     MockResearchProvider,
+    ResearchRegistry,
     ResearchClient,
 )
 
@@ -141,7 +142,7 @@ __all__ = [
     "CapabilityResponse", "CapabilityProvider", "MockCapabilityProvider", "ConfigurableCapabilityProvider",
     "CapabilityClient",
     "ResearchErrorCode", "ResearchSource", "ResearchRequest", "ResearchResult",
-    "ResearchProvider", "MockResearchProvider", "ResearchClient",
+    "ResearchProvider", "MockResearchProvider", "ResearchRegistry", "ResearchClient",
 ]
 
 __version__ = "1.1.0"
