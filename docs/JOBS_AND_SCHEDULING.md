@@ -71,3 +71,18 @@ executions). Metadata always includes `job_id` and `attempt`.
 |--------|------|
 | `agent_platform/jobs.py` | JobRecord, JobScheduler, stores |
 | `tests/test_jobs.py` | Required coverage |
+
+
+## Bounded concurrency
+
+```python
+sched = JobScheduler(runtime, store=store, max_concurrent=4)
+```
+
+When set, `tick()` starts at most `max_concurrent` jobs with status `running`.
+Additional due jobs remain `queued`/`scheduled` until capacity frees
+(after completion / failure / cancel).
+
+## Enqueue
+
+`scheduler.enqueue(...)` is an alias for `create_job(...)`.

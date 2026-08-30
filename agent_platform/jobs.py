@@ -394,7 +394,11 @@ class JobScheduler:
         runtime: ExecutionRuntime,
         store: Optional[JobStore] = None,
         emitter: Optional[EventEmitter] = None,
+        *,
+        max_concurrent: Optional[int] = None,
     ) -> None:
+        if max_concurrent is not None and max_concurrent < 1:
+            raise ValueError("max_concurrent must be >= 1")
         self._runtime = runtime
         self._store: Optional[JobStore] = store
         self._emitter = emitter or runtime.events
@@ -403,10 +407,46 @@ class JobScheduler:
         # Track which execution_ids were created by this scheduler to avoid
         # double-processing after recovery.
         self._known_executions: Set[str] = set()
+        # Bounded concurrency: None means unlimited.
+        self._max_concurrent = max_concurrent
 
     @property
     def runtime(self) -> ExecutionRuntime:
         return self._runtime
+
+    @property
+    def max_concurrent(self) -> Optional[int]:
+        return self._max_concurrent
+
+    def _running_count(self) -> int:
+        with self._lock:
+            return sum(1 for j in self._jobs.values() if j.status == JobState.RUNNING)
+
+    def enqueue(
+        self,
+        *,
+        task_id: str,
+        schedule: Optional[ScheduleSpec] = None,
+        session_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        capabilities: Optional[Sequence[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        retry: Optional[RetryPolicy] = None,
+        job_id: Optional[str] = None,
+        run_immediately: bool = False,
+    ) -> JobRecord:
+        """Alias for create_job — enqueue a durable job definition."""
+        return self.create_job(
+            task_id=task_id,
+            schedule=schedule,
+            session_id=session_id,
+            agent_id=agent_id,
+            capabilities=capabilities,
+            metadata=metadata,
+            retry=retry,
+            job_id=job_id,
+            run_immediately=run_immediately,
+        )
 
     def create_job(
         self,
@@ -481,8 +521,11 @@ class JobScheduler:
         Advance the scheduler.
 
         If job_id is given, only that job is considered.
-        Otherwise all due non-terminal jobs are considered.
-        Returns the job that was started (or None if nothing due).
+        Otherwise all due non-terminal jobs are considered, subject to
+        ``max_concurrent`` (when set).
+
+        Returns the last job that was started (or None if nothing due /
+        concurrency saturated).
         """
         now = now if now is not None else time.time()
         candidates: List[JobRecord]
@@ -500,6 +543,8 @@ class JobScheduler:
                     and j.status
                     in (JobState.QUEUED, JobState.SCHEDULED, JobState.PAUSED)
                 ]
+                # Deterministic order for tests: oldest first.
+                candidates.sort(key=lambda j: (j.created_at, j.job_id))
 
         started: Optional[JobRecord] = None
         for job in candidates:
@@ -516,6 +561,10 @@ class JobScheduler:
                 rec = self._runtime.get(job.execution_id)
                 if rec is not None and not rec.is_terminal():
                     continue
+            # Bounded concurrency
+            if self._max_concurrent is not None:
+                if self._running_count() >= self._max_concurrent:
+                    break
             started = self._start_execution(job)
         return started
 

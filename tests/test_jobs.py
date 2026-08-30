@@ -324,3 +324,79 @@ def test_backward_compatible_runtime_without_scheduler():
     rt.start(rec.execution_id)
     rt.complete(rec.execution_id, 42)
     assert rt.get(rec.execution_id).status == ExecutionState.SUCCEEDED
+
+
+def test_bounded_concurrency():
+    """max_concurrent limits how many jobs can be RUNNING at once."""
+    rt = ExecutionRuntime(store=InMemoryExecutionStore())
+    sched = JobScheduler(rt, store=InMemoryJobStore(), max_concurrent=2)
+    jobs = [
+        sched.create_job(
+            task_id=f"bc-{i}",
+            schedule=ScheduleSpec(immediate=True),
+            run_immediately=False,
+        )
+        for i in range(5)
+    ]
+    # First tick wave — only 2 should start
+    for _ in range(5):
+        sched.tick()
+    running = [j for j in sched.list_jobs() if j.status == JobState.RUNNING]
+    queued_or_sched = [
+        j
+        for j in sched.list_jobs()
+        if j.status in (JobState.QUEUED, JobState.SCHEDULED)
+    ]
+    assert len(running) == 2
+    assert len(queued_or_sched) == 3
+
+    # Complete one running job -> capacity frees
+    done = running[0]
+    rt.complete(done.execution_id)
+    sched.on_execution_terminal(done.execution_id, success=True)
+    sched.tick()
+    running2 = [j for j in sched.list_jobs() if j.status == JobState.RUNNING]
+    assert len(running2) == 2  # still capped
+
+
+def test_enqueue_alias():
+    sched = _sched()
+    job = sched.enqueue(
+        task_id="enq-1",
+        schedule=ScheduleSpec(immediate=False),
+        run_immediately=False,
+    )
+    assert job.status == JobState.QUEUED
+    assert sched.get(job.job_id) is not None
+
+
+def test_job_execution_correlation_in_metadata():
+    sched = _sched()
+    job = sched.create_job(task_id="corr", run_immediately=True)
+    rec = sched.runtime.get(job.execution_id)
+    assert rec.metadata["job_id"] == job.job_id
+    assert rec.metadata["job_attempt"] == 1
+    assert job.execution_id == rec.execution_id
+
+
+def test_duplicate_delivery_same_job_id_rejected():
+    sched = _sched()
+    sched.create_job(task_id="d1", job_id="same-id", run_immediately=False)
+    with pytest.raises(ValueError, match="already exists"):
+        sched.create_job(task_id="d2", job_id="same-id", run_immediately=True)
+
+
+def test_max_concurrent_validation():
+    rt = ExecutionRuntime()
+    with pytest.raises(ValueError):
+        JobScheduler(rt, max_concurrent=0)
+
+
+def test_retry_backoff_deterministic():
+    policy = RetryPolicy(max_attempts=5, backoff_seconds=1.0, max_backoff_seconds=10.0)
+    assert policy.next_backoff(1) == 0.0
+    assert policy.next_backoff(2) == 1.0
+    assert policy.next_backoff(3) == 2.0
+    assert policy.next_backoff(4) == 4.0
+    assert policy.next_backoff(5) == 8.0
+    assert policy.next_backoff(6) == 10.0  # capped
