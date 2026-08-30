@@ -31,6 +31,15 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from agent_platform.execution import ExecutionRuntime, ExecutionState, redact_secrets
 from agent_platform.state_machine import InvalidTransitionError
+from agent_platform.security import (
+    MAX_JSON_BODY_BYTES,
+    SecurityError,
+    safe_error_detail,
+    sanitize_metadata,
+    validate_capabilities,
+    validate_identifier,
+    validate_optional_identifier,
+)
 from agent_platform.observability import (
     execution_diagnostics,
     get_metrics,
@@ -156,6 +165,10 @@ def create_app(
         idempotency_key: Optional[str],
         body: Optional[ControlBody],
     ) -> JSONResponse:
+        try:
+            execution_id = validate_identifier(execution_id, name="execution_id")
+        except SecurityError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         path = f"/v1/executions/{execution_id}/{action}"
         if idempotency_key:
             cache_key = ("POST", path, idempotency_key)
@@ -190,6 +203,17 @@ def create_app(
     @app.middleware("http")
     async def _attach_request_id(request: Request, call_next: Callable):
         metrics.inc("http_requests")
+        cl = request.headers.get("content-length")
+        if cl is not None:
+            try:
+                if int(cl) > MAX_JSON_BODY_BYTES:
+                    metrics.inc("http_errors")
+                    return JSONResponse(
+                        status_code=413,
+                        content={"detail": "request body too large"},
+                    )
+            except ValueError:
+                pass
         response = await call_next(request)
         if response.status_code >= 400:
             metrics.inc("http_errors")
@@ -256,16 +280,15 @@ def create_app(
                         content=payload,
                         headers={"X-Request-Id": request_id},
                     )
-        task_id = body.get("task_id")
-        if not task_id or not isinstance(task_id, str):
-            raise HTTPException(status_code=400, detail="task_id is required")
-        session_id = body.get("session_id")
-        agent_id = body.get("agent_id")
-        capabilities = body.get("capabilities")
-        metadata = body.get("metadata") or {}
-        if not isinstance(metadata, dict):
-            metadata = {}
-        execution_id = body.get("execution_id")
+        try:
+            task_id = validate_identifier(body.get("task_id"), name="task_id")
+            session_id = validate_optional_identifier(body.get("session_id"), name="session_id")
+            agent_id = validate_optional_identifier(body.get("agent_id"), name="agent_id")
+            execution_id = validate_optional_identifier(body.get("execution_id"), name="execution_id")
+            capabilities = validate_capabilities(body.get("capabilities"))
+            metadata = sanitize_metadata(body.get("metadata"))
+        except SecurityError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         start = bool(body.get("start", False))
         try:
             rec = rt.create(
@@ -305,6 +328,10 @@ def create_app(
 
     @app.get("/v1/executions/{execution_id}")
     def get_execution(execution_id: str, request_id: str = Depends(_auth)) -> JSONResponse:
+        try:
+            execution_id = validate_identifier(execution_id, name="execution_id")
+        except SecurityError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         rec = _get_or_recover(execution_id)
         if rec is None:
             raise HTTPException(status_code=404, detail=f"execution not found: {execution_id}")
