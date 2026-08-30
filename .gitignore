@@ -12,3 +12,6 @@ env/
 # Local audit artifacts
 pytest-full.log
 audit-rg.log
+yasin_agent.egg-info/
+dist/
+build/
