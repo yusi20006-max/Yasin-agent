@@ -43,12 +43,9 @@ agent_platform/
 │   ├── memory_context.py    # memory, context, isolated sessions
 │   ├── execution.py         # observable execution workspace boundary (#26)
 │   ├── integration.py       # Yasin-Core SDK adapter + fallback
+│   ├── server/              # optional HTTP adapter for YasinHub (#38)
 │   └── cli.py               # CLI helpers
 ├── tests/
-│   ├── test_agent_platform.py
-│   ├── test_memory_context.py
-│   ├── test_execution_boundary.py
-│   └── test_integration.py
 ├── conftest.py
 └── README.md
 ```
@@ -64,6 +61,25 @@ pip install pytest click
 # optional: editable install of Yasin-Core if integrating against a real SDK
 pytest tests/ -v
 ```
+
+## HTTP runtime adapter (YasinHub)
+
+Optional authenticated HTTP surface over `ExecutionRuntime` for YasinHub:
+
+```sh
+pip install 'yasin-agent[server]'
+export YASIN_AGENT_SERVICE_TOKEN=shared-secret
+python -m agent_platform.server
+```
+
+YasinHub:
+
+```sh
+export YASINHUB_AGENT_BASE_URL=http://127.0.0.1:8080
+export YASINHUB_AGENT_SERVICE_TOKEN=shared-secret
+```
+
+See [docs/HTTP_RUNTIME_ADAPTER.md](docs/HTTP_RUNTIME_ADAPTER.md) (Issue #38).
 
 ---
 
