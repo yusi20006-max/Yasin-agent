@@ -143,3 +143,81 @@ def test_secret_redaction_in_asset():
     a = mm.add_memory("x", metadata={"api_key": "sk-abc1234567890123"})
     d = a.as_dict()
     assert d["metadata"]["api_key"] == "***"
+
+
+def test_skill_separate_from_memory():
+    mm = LayeredMemoryManager()
+    skill = mm.add_skill("summarize", description="summarize text")
+    lo = mm.create_loadout("agent-s")
+    mm.attach_skill(lo.loadout_id, skill.skill_id)
+    assert mm.get_skill(skill.skill_id).name == "summarize"
+    problems = mm.validate_loadout(lo.loadout_id)
+    assert problems == []
+    # skill is not a memory asset
+    assert mm.get_memory(skill.skill_id) is None
+
+
+def test_skill_acl_via_loadout():
+    mm = LayeredMemoryManager()
+    skill = mm.add_skill("wiki-search")
+    lo = mm.create_loadout("agent-s")
+    mm.attach_skill(lo.loadout_id, skill.skill_id)
+    assert lo.allows(skill.skill_id, asset_type=AssetType.SKILL)
+    lo_b = mm.create_loadout("agent-other")
+    assert not lo_b.allows(skill.skill_id, asset_type=AssetType.SKILL)
+
+
+def test_apply_to_execution_intersects_capabilities():
+    from agent_platform.execution import ExecutionRuntime
+
+    mm = LayeredMemoryManager()
+    mem = mm.add_memory("persona", layer=MemoryLayer.L3_CORE)
+    lo = mm.create_loadout(
+        "agent-e",
+        capabilities=["read", "research"],
+    )
+    mm.attach_memory(lo.loadout_id, mem.asset_id)
+
+    rt = ExecutionRuntime()
+    rec = rt.create(
+        task_id="t",
+        agent_id="agent-e",
+        capabilities=["read", "shell", "research"],
+    )
+    info = mm.apply_to_execution(rt, rec.execution_id)
+    assert "shell" not in info["capabilities"]
+    assert set(info["capabilities"]) == {"read", "research"}
+    assert mem.asset_id in info["memory_asset_ids"]
+    # execution record updated
+    assert "shell" not in rt.get(rec.execution_id).capabilities
+
+
+def test_execution_without_loadout_keeps_capabilities():
+    from agent_platform.execution import ExecutionRuntime
+
+    mm = LayeredMemoryManager()
+    rt = ExecutionRuntime()
+    rec = rt.create(task_id="t", agent_id="unknown", capabilities=["read"])
+    info = mm.apply_to_execution(rt, rec.execution_id)
+    assert info["loadout_id"] is None
+    assert "read" in info["capabilities"]
+
+
+def test_session_scope_binding():
+    mm = LayeredMemoryManager()
+    mem = mm.add_memory("scoped")
+    lo = mm.create_loadout("agent-sc")
+    mm.attach_memory(lo.loadout_id, mem.asset_id, scope="sess-1")
+    # matching scope allowed
+    got = mm.get_memory(mem.asset_id, agent_id="agent-sc", scope="sess-1")
+    assert got is not None
+    # different scope denied
+    with pytest.raises(MemoryAccessDenied):
+        mm.get_memory(mem.asset_id, agent_id="agent-sc", scope="sess-2")
+
+
+def test_no_ai_provider_coupling():
+    """Manager works with no Yasin-AI / SDK client."""
+    mm = LayeredMemoryManager()
+    a = mm.add_memory({"fact": 1}, layer=MemoryLayer.L1_ATOM)
+    assert a.asset_id.startswith("mem-")

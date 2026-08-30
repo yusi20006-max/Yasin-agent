@@ -90,6 +90,42 @@ class MemoryAsset:
 
 
 @dataclass
+class SkillAsset:
+    """Runtime skill asset, separate from Memory but addressable in a loadout."""
+
+    skill_id: str
+    name: str
+    description: str = ""
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    version: int = 1
+    created_at: float = field(default_factory=time.time)
+
+    def as_dict(self) -> Dict[str, Any]:
+        return redact_secrets(
+            {
+                "skill_id": self.skill_id,
+                "asset_type": AssetType.SKILL.value,
+                "name": self.name,
+                "description": self.description,
+                "metadata": dict(self.metadata),
+                "version": self.version,
+                "created_at": self.created_at,
+            }
+        )
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SkillAsset":
+        return cls(
+            skill_id=str(data.get("skill_id") or data["asset_id"]),
+            name=str(data.get("name") or ""),
+            description=str(data.get("description") or ""),
+            metadata=dict(data.get("metadata") or {}),
+            version=int(data.get("version") or 1),
+            created_at=float(data.get("created_at") or time.time()),
+        )
+
+
+@dataclass
 class LoadoutBinding:
     """ACL-style binding of an asset to an agent/loadout."""
 
@@ -374,6 +410,7 @@ class LayeredMemoryManager:
     def __init__(self, store: Optional[MemoryStore] = None) -> None:
         self._store: MemoryStore = store or InMemoryMemoryStore()
         self._assets: Dict[str, MemoryAsset] = {}
+        self._skills: Dict[str, SkillAsset] = {}
         self._loadouts: Dict[str, AgentLoadout] = {}
         self._agent_loadout: Dict[str, str] = {}  # agent_id -> loadout_id
         self._lock = threading.RLock()
@@ -450,7 +487,12 @@ class LayeredMemoryManager:
             payload = self._store.load_asset(asset_id)
             if payload is None:
                 return None
-            asset = MemoryAsset.from_dict(payload)
+            if payload.get("asset_type") == AssetType.SKILL.value:
+                return None
+            try:
+                asset = MemoryAsset.from_dict(payload)
+            except (KeyError, TypeError, ValueError):
+                return None
             with self._lock:
                 self._assets[asset_id] = asset
         if agent_id is not None:
@@ -594,6 +636,131 @@ class LayeredMemoryManager:
             return None
         return self.load_loadout(lid)
 
+    def add_skill(
+        self,
+        name: str,
+        *,
+        description: str = "",
+        metadata: Optional[Dict[str, Any]] = None,
+        skill_id: Optional[str] = None,
+    ) -> SkillAsset:
+        skill = SkillAsset(
+            skill_id=skill_id or f"skl-{uuid.uuid4().hex[:16]}",
+            name=name,
+            description=description,
+            metadata=dict(metadata or {}),
+        )
+        with self._lock:
+            if skill.skill_id in self._skills:
+                raise ValueError(f"skill_id already exists: {skill.skill_id}")
+            self._skills[skill.skill_id] = skill
+        try:
+            payload = skill.as_dict()
+            payload["asset_id"] = skill.skill_id
+            self._store.save_asset(skill.skill_id, payload)
+        except Exception:
+            pass
+        return skill
+
+    def get_skill(self, skill_id: str) -> Optional[SkillAsset]:
+        skill = self._skills.get(skill_id)
+        if skill is not None:
+            return skill
+        payload = self._store.load_asset(skill_id)
+        if not payload:
+            return None
+        try:
+            skill = SkillAsset.from_dict(payload)
+        except (KeyError, TypeError, ValueError):
+            return None
+        with self._lock:
+            self._skills[skill_id] = skill
+        return skill
+
+    def attach_asset(
+        self,
+        loadout_id: str,
+        asset_id: str,
+        asset_type: AssetType,
+        *,
+        allow_read: bool = True,
+        allow_write: bool = False,
+        scope: Optional[str] = None,
+    ) -> AgentLoadout:
+        lo = self._require_loadout(loadout_id)
+        if asset_type == AssetType.MEMORY and self.get_memory(asset_id) is None:
+            raise KeyError(f"unknown asset_id: {asset_id}")
+        if asset_type == AssetType.SKILL and self.get_skill(asset_id) is None:
+            raise KeyError(f"unknown skill_id: {asset_id}")
+        lo.bindings = [b for b in lo.bindings if not (b.asset_id == asset_id and b.asset_type == asset_type)]
+        lo.bindings.append(
+            LoadoutBinding(
+                asset_id=asset_id,
+                asset_type=asset_type,
+                allow_read=allow_read,
+                allow_write=allow_write,
+                scope=scope,
+            )
+        )
+        lo.version += 1
+        lo.updated_at = time.time()
+        self._persist_loadout(lo)
+        return lo
+
+    def attach_skill(
+        self,
+        loadout_id: str,
+        skill_id: str,
+        *,
+        allow_read: bool = True,
+        scope: Optional[str] = None,
+    ) -> AgentLoadout:
+        return self.attach_asset(
+            loadout_id,
+            skill_id,
+            AssetType.SKILL,
+            allow_read=allow_read,
+            allow_write=False,
+            scope=scope,
+        )
+
+    def memories_for_agent(
+        self,
+        agent_id: str,
+        *,
+        scope: Optional[str] = None,
+        layer: Optional[MemoryLayer] = None,
+    ) -> List[MemoryAsset]:
+        """Scoped retrieval: only memories bound to the agent's active loadout."""
+        return self.search_memory(layer=layer, agent_id=agent_id)
+
+    def apply_to_execution(self, runtime: Any, execution_id: str) -> Dict[str, Any]:
+        """
+        Bind loadout constraints onto an ExecutionRuntime record.
+
+        Does not grant extra capabilities. Intersects execution.capabilities
+        with the agent's loadout capabilities. Returns a diagnostic dict.
+        """
+        rec = runtime.get(execution_id)
+        if rec is None:
+            raise KeyError(f"unknown execution_id: {execution_id}")
+        agent_id = rec.agent_id
+        lo = self.get_active_loadout(agent_id) if agent_id else None
+        granted = set(rec.capabilities)
+        if lo is not None and lo.capabilities:
+            granted = granted.intersection(lo.capabilities)
+            rec.capabilities = frozenset(granted)
+        accessible = []
+        if agent_id:
+            accessible = [a.asset_id for a in self.memories_for_agent(agent_id)]
+        return {
+            "execution_id": execution_id,
+            "agent_id": agent_id,
+            "loadout_id": lo.loadout_id if lo else None,
+            "capabilities": sorted(granted),
+            "memory_asset_ids": accessible,
+        }
+
     def validate_loadout(self, loadout_id: str) -> List[str]:
         """Return list of problems (empty if valid)."""
         problems: List[str] = []
@@ -604,6 +771,9 @@ class LayeredMemoryManager:
             if b.asset_type == AssetType.MEMORY:
                 if self.get_memory(b.asset_id) is None:
                     problems.append(f"missing memory asset: {b.asset_id}")
+            elif b.asset_type == AssetType.SKILL:
+                if self.get_skill(b.asset_id) is None:
+                    problems.append(f"missing skill asset: {b.asset_id}")
         return problems
 
     # ---- ACL helpers ----
@@ -615,12 +785,13 @@ class LayeredMemoryManager:
         *,
         write: bool = False,
         scope: Optional[str] = None,
+        asset_type: AssetType = AssetType.MEMORY,
     ) -> bool:
         lo = self.get_active_loadout(agent_id)
         if lo is None:
             return False
         return lo.allows(
-            asset_id, asset_type=AssetType.MEMORY, write=write, scope=scope
+            asset_id, asset_type=asset_type, write=write, scope=scope
         )
 
     def _check_access(
@@ -665,6 +836,7 @@ __all__ = [
     "MemoryLayer",
     "AssetType",
     "MemoryAsset",
+    "SkillAsset",
     "LoadoutBinding",
     "AgentLoadout",
     "MemoryAccessDenied",
