@@ -362,3 +362,30 @@ def test_hub_client_retry_on_transient(monkeypatch) -> None:
     body = client.health()
     assert body["status"] == "healthy"
     assert calls["n"] == 3
+
+
+def test_metrics_and_diagnostics_endpoints(client: TestClient, runtime: ExecutionRuntime) -> None:
+    from agent_platform.observability import get_metrics
+
+    get_metrics().reset()
+    r = client.post(
+        "/v1/executions",
+        headers=_auth(),
+        json={"task_id": "obs-1", "start": True},
+    )
+    eid = r.json()["execution_id"]
+    m = client.get("/v1/metrics", headers=_auth())
+    assert m.status_code == 200
+    assert "metrics" in m.json()
+    assert m.json()["metrics"]["http_requests"] >= 1
+
+    diag = client.get(f"/v1/executions/{eid}/diagnostics", headers=_auth())
+    assert diag.status_code == 200
+    body = diag.json()
+    assert body["execution_id"] == eid
+    assert body["status"] == "running"
+    assert "duration_seconds" in body
+
+    health = client.get("/v1/health", headers=_auth())
+    assert health.status_code == 200
+    assert "metrics" in health.json()

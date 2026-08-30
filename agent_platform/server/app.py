@@ -31,6 +31,12 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from agent_platform.execution import ExecutionRuntime, ExecutionState, redact_secrets
 from agent_platform.state_machine import InvalidTransitionError
+from agent_platform.observability import (
+    execution_diagnostics,
+    get_metrics,
+    health_payload,
+    install_runtime_metrics,
+)
 
 try:
     from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, Response
@@ -72,6 +78,8 @@ def create_app(
     app.state.started_at = time.time()
     app.state.idempotency: Dict[Tuple[str, str, str], Tuple[int, Any]] = {}
     app.state.idem_lock = threading.Lock()
+    install_runtime_metrics(rt)
+    metrics = get_metrics()
 
     def _auth(
         authorization: Optional[str] = Header(default=None),
@@ -181,7 +189,10 @@ def create_app(
 
     @app.middleware("http")
     async def _attach_request_id(request: Request, call_next: Callable):
+        metrics.inc("http_requests")
         response = await call_next(request)
+        if response.status_code >= 400:
+            metrics.inc("http_errors")
         rid = request.headers.get("X-Request-Id")
         if rid and "X-Request-Id" not in response.headers:
             response.headers["X-Request-Id"] = rid
@@ -191,13 +202,11 @@ def create_app(
     def health(request_id: str = Depends(_auth)) -> JSONResponse:
         with rt._lock:
             count = len(rt._executions)
-        payload = {
-            "status": "healthy",
-            "service": "yasin-agent",
-            "version": "1.0.0",
-            "executions": count,
-            "uptime_seconds": round(time.time() - app.state.started_at, 3),
-        }
+        payload = health_payload(
+            executions=count,
+            started_at=app.state.started_at,
+            ready=True,
+        )
         return JSONResponse(content=payload, headers={"X-Request-Id": request_id})
 
     @app.get("/v1/ready")
@@ -209,6 +218,25 @@ def create_app(
             "ready": True,
         }
         return JSONResponse(content=payload, headers={"X-Request-Id": request_id})
+
+    @app.get("/v1/metrics")
+    def metrics_endpoint(request_id: str = Depends(_auth)) -> JSONResponse:
+        return JSONResponse(
+            content={"metrics": metrics.snapshot()},
+            headers={"X-Request-Id": request_id},
+        )
+
+    @app.get("/v1/executions/{execution_id}/diagnostics")
+    def execution_diagnostics_endpoint(
+        execution_id: str, request_id: str = Depends(_auth)
+    ) -> JSONResponse:
+        rec = _get_or_recover(execution_id)
+        if rec is None:
+            raise HTTPException(status_code=404, detail=f"execution not found: {execution_id}")
+        return JSONResponse(
+            content=execution_diagnostics(rec),
+            headers={"X-Request-Id": request_id},
+        )
 
     @app.post("/v1/executions")
     def create_execution(

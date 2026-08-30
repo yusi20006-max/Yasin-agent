@@ -68,6 +68,20 @@ from .ai_capability import (
     ConfigurableCapabilityProvider,
     CapabilityClient,
 )
+
+from .observability import (
+    ErrorClass,
+    RuntimeMetrics,
+    get_metrics,
+    correlation_context,
+    safe_log_extra,
+    classify_error,
+    execution_diagnostics,
+    structured_log,
+    health_payload,
+    install_runtime_metrics,
+)
+
 from .research import (
     ResearchErrorCode,
     ResearchSource,
@@ -143,6 +157,9 @@ __all__ = [
     "CapabilityClient",
     "ResearchErrorCode", "ResearchSource", "ResearchRequest", "ResearchResult",
     "ResearchProvider", "MockResearchProvider", "ResearchRegistry", "ResearchClient",
+    "ErrorClass", "RuntimeMetrics", "get_metrics", "correlation_context",
+    "safe_log_extra", "classify_error", "execution_diagnostics",
+    "structured_log", "health_payload", "install_runtime_metrics",
 ]
 
 __version__ = "1.1.0"
