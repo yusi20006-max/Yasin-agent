@@ -64,6 +64,18 @@ Health: `GET /v1/health` with `Authorization: Bearer shared-secret`.
 
 ---
 
+## Compatibility import (`yasin_agent.sdk`)
+
+YasinHub and older tooling may import:
+
+```python
+from yasin_agent.sdk import YasinAgentClient
+```
+
+This is a **thin compatibility surface** over `agent_platform` (registry/status/health). The primary package remains `agent_platform`. Production Hub orchestration uses authenticated HTTP (`HubAgentClient` / Agent server), not this in-process client.
+
+---
+
 ## YasinHub integration
 
 ```bash
@@ -164,7 +176,8 @@ Docs: [docs/RESEARCH_BOUNDARY.md](docs/RESEARCH_BOUNDARY.md)
 ## Package layout
 
 ```
-agent_platform/
+agent_platform/     # primary public package
+yasin_agent/        # compatibility import for Hub (sdk.YasinAgentClient)
   execution.py      # ExecutionRuntime lifecycle + recovery
   persistence.py    # ExecutionStore backends
   jobs.py           # JobScheduler

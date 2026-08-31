@@ -43,4 +43,4 @@ yasin-agent-server = "agent_platform.server.app:main"
 version = {attr = "agent_platform.__version__"}
 
 [tool.setuptools.packages.find]
-include = ["agent_platform*"]
+include = ["agent_platform*", "yasin_agent*"]
