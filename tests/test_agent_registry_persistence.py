@@ -9,7 +9,6 @@ import sys
 from agent_platform.agent_registry import (
     AgentConfig,
     AgentRegistry,
-    JsonFileAgentRegistryStore,
 )
 from yasin_agent.sdk import YasinAgentClient
 
