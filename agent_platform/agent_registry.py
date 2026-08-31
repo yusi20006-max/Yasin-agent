@@ -20,7 +20,7 @@ import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Union
 
 
 _SECRET_KEY_RE = re.compile(
@@ -77,7 +77,7 @@ class AgentRegistryStore(ABC):
 class JsonFileAgentRegistryStore(AgentRegistryStore):
     """Atomic JSON-file store for single-node/Termux registry persistence."""
 
-    def __init__(self, path: str | os.PathLike[str]) -> None:
+    def __init__(self, path: Union[str, os.PathLike]) -> None:
         self.path = Path(path).expanduser()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
@@ -134,7 +134,7 @@ class AgentRegistry:
             self._load_from_store()
 
     @classmethod
-    def from_path(cls, path: str | os.PathLike[str]) -> "AgentRegistry":
+    def from_path(cls, path: Union[str, os.PathLike]) -> "AgentRegistry":
         """Create a registry backed by a JSON file."""
         return cls(store=JsonFileAgentRegistryStore(path))
 
@@ -275,8 +275,6 @@ class AgentRegistry:
                         default_context=cfg.get("default_context", {}),
                     )
                 )
-        # from_dict must remain side-effect free for callers that use it as a
-        # deserializer; register() would otherwise try to persist to a store.
         return registry
 
 
