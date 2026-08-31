@@ -15,7 +15,7 @@ Design goal: core runtime works **without** FastAPI, external AI, or network res
 
 ## Requirements
 
-- Python **3.9 – 3.13**
+- Python **3.9 – 3.14**
 - Core: `click`
 - Server (optional): `fastapi`, `uvicorn`
 - Tests: `pytest`, `httpx` (+ server extras for HTTP tests)
