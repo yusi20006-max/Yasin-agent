@@ -45,6 +45,7 @@ Clean clone → install → test must succeed with no personal secrets or machin
 | Variable | Purpose |
 |----------|---------|
 | `YASIN_AGENT_SERVICE_TOKEN` | Shared bearer token for Hub ↔ Agent HTTP |
+| `YASIN_AGENT_REGISTRY_PATH` | Optional persistent JSON path for the YasinAgentClient compatibility registry |
 | `YASINHUB_AGENT_BASE_URL` | Hub-side base URL (e.g. `http://127.0.0.1:8080`) |
 | `YASINHUB_AGENT_SERVICE_TOKEN` | Same shared secret on Hub |
 
@@ -73,6 +74,25 @@ from yasin_agent.sdk import YasinAgentClient
 ```
 
 This is a **thin compatibility surface** over `agent_platform` (registry/status/health). The primary package remains `agent_platform`. Production Hub orchestration uses authenticated HTTP (`HubAgentClient` / Agent server), not this in-process client.
+
+### Agent Registry persistence
+
+`AgentRegistry()` remains in-memory by default for library/unit-test use. The compatibility `YasinAgentClient()` uses a small atomic JSON registry by default so YasinHub CLI/Doctor can observe registrations across separate processes. Override the location with `YASIN_AGENT_REGISTRY_PATH` or the `registry_path=` constructor argument.
+
+```bash
+export YASIN_AGENT_REGISTRY_PATH="$HOME/.yasin/agent_registry.json"
+```
+
+Or explicitly:
+
+```python
+from agent_platform.agent_registry import AgentRegistry
+from yasin_agent.sdk import YasinAgentClient
+
+client = YasinAgentClient(registry=AgentRegistry.from_path("/var/lib/yasin/agents.json"))
+```
+
+The registry store redacts secret-looking keys/values and uses atomic file replacement. It is intended for local/single-node CLI state, not multi-writer distributed coordination.
 
 ---
 

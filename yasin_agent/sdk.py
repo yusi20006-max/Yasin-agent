@@ -1,30 +1,56 @@
 """
 Public in-process SDK surface expected by YasinHub ``agent_integration``.
 
-Production Hub \u2194 Agent control remains authenticated HTTP
+Production Hub → Agent control remains authenticated HTTP
 (``agent_platform.server`` / Hub ``HttpTransportClient``). This client is a
 thin compatibility adapter over ``agent_platform.AgentRegistry`` for CLI and
 doctor health checks.
+
+For CLI/doctor use, the compatibility registry is durable by default. The
+path can be overridden with ``registry_path`` or ``YASIN_AGENT_REGISTRY_PATH``.
+Pass an explicit ``AgentRegistry`` to keep fully in-memory/test behaviour.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+import os
+from pathlib import Path
+from typing import Any, Dict, Optional, Union
 
-from agent_platform.agent_registry import AgentConfig, AgentNotFoundError, AgentRegistry
+from agent_platform.agent_registry import (
+    AgentConfig,
+    AgentNotFoundError,
+    AgentRegistry,
+)
 from agent_platform import __version__ as _AGENT_VERSION
 
 
-class YasinAgentClient:
-    """Minimal in-process client matching YasinHub AgentIntegration expectations."""
+_DEFAULT_REGISTRY_PATH = Path("~/.yasin/agent_registry.json").expanduser()
 
-    def __init__(self, registry: Optional[AgentRegistry] = None) -> None:
-        self._registry = registry if registry is not None else AgentRegistry()
+
+class YasinAgentClient:
+    """Minimal client matching YasinHub AgentIntegration expectations."""
+
+    def __init__(
+        self,
+        registry: Optional[AgentRegistry] = None,
+        *,
+        registry_path: Optional[Union[str, os.PathLike]] = None,
+    ) -> None:
+        if registry is not None:
+            self._registry = registry
+        else:
+            path = registry_path or os.environ.get("YASIN_AGENT_REGISTRY_PATH")
+            self._registry = AgentRegistry.from_path(path or _DEFAULT_REGISTRY_PATH)
         self._running: Dict[str, bool] = {}
 
     @property
     def version(self) -> str:
         return str(_AGENT_VERSION)
+
+    @property
+    def registry(self) -> AgentRegistry:
+        return self._registry
 
     def register_agent(self, name: str, description: str = "") -> bool:
         name = (name or "").strip()
@@ -37,7 +63,8 @@ class YasinAgentClient:
         except AgentNotFoundError:
             pass
         self._registry.register(
-            AgentConfig(name=name, goal=goal, description=description or "")
+            AgentConfig(name=name, goal=goal, description=description or ""),
+            overwrite=True,
         )
         return True
 
@@ -99,4 +126,4 @@ class YasinAgentClient:
         }
 
     def list_agents(self) -> list:
-        return self._registry.list_names()
+        return self._registry.list_agents()
