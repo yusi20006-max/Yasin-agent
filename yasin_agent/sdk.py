@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from agent_platform.agent_registry import (
     AgentConfig,
@@ -35,15 +35,13 @@ class YasinAgentClient:
         self,
         registry: Optional[AgentRegistry] = None,
         *,
-        registry_path: Optional[str | os.PathLike[str]] = None,
+        registry_path: Optional[Union[str, os.PathLike]] = None,
     ) -> None:
         if registry is not None:
             self._registry = registry
         else:
             path = registry_path or os.environ.get("YASIN_AGENT_REGISTRY_PATH")
-            self._registry = (
-                AgentRegistry.from_path(path or _DEFAULT_REGISTRY_PATH)
-            )
+            self._registry = AgentRegistry.from_path(path or _DEFAULT_REGISTRY_PATH)
         self._running: Dict[str, bool] = {}
 
     @property
