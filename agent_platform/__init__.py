@@ -7,7 +7,13 @@ agent_platform
 بازنویسی آن.
 """
 
-from .agent_registry import AgentConfig, AgentNotFoundError, AgentRegistry
+from .agent_registry import (
+    AgentConfig,
+    AgentNotFoundError,
+    AgentRegistryStore,
+    JsonFileAgentRegistryStore,
+    AgentRegistry,
+)
 from .agent_definition import (
     AgentMetadata,
     AgentConfiguration,
@@ -55,7 +61,6 @@ from .harness import (
     WorkerResult,
     WorkerSpec,
 )
-
 
 
 from .ai_capability import (
@@ -134,7 +139,7 @@ from .memory_context import (
 )
 
 __all__ = [
-    "AgentConfig", "AgentNotFoundError", "AgentRegistry",
+    "AgentConfig", "AgentNotFoundError", "AgentRegistryStore", "JsonFileAgentRegistryStore", "AgentRegistry",
     "AgentMetadata", "AgentConfiguration", "AgentProfile", "PromptHandler", "AgentDefinition",
     "Executor", "Planner", "Step", "TemplatePlanner", "UnknownGoalError",
     "InvalidTransitionError", "StateMachine", "TaskState", "StepResult", "Task", "TaskResult",
