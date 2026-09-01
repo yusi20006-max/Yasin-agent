@@ -58,14 +58,10 @@ class ContextManager:
         if client and hasattr(client, "create_context"):
             return client.create_context(data)
 
-        # Fallback به ایمپورت مستقیم Context در صورت وجود
-        try:
-            from yasin_core.context import Context
-            return Context(data)
-        except ImportError:
-            # Fallback برای محیط‌های شبیه‌سازی شده بدون yasin_core
-            from agent_platform.integration import MockContext
-            return MockContext(data)
+        # Public SDK boundary: no direct yasin_core.context import.
+        # Without a Core client, use the local MockContext fallback.
+        from agent_platform.integration import MockContext
+        return MockContext(data)
 
     def propagate(self, context: Any) -> Any:
         """انتشار و اعمال کانتکست پردازشی در لایه جاری (استفاده به عنوان Context Manager)."""
