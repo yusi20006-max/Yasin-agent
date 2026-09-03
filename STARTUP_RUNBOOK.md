@@ -126,6 +126,8 @@ health: status=healthy
 ready:  ready=true
 ```
 
+پاسخ شامل متادیتای سیستم (`system`: `python_version`, `platform`, `arch`, `is_android`, `is_termux`, `android_api_level`) نیز می‌باشد.
+
 اگر `Connection refused` گرفتید، اول بررسی کنید Process واقعاً در حال اجراست و Port 8080 آزاد/درست است.
 
 ## 8. اجرای استاندارد در اکوسیستم — از طریق YasinHub

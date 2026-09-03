@@ -8,6 +8,10 @@ payloads, and execution diagnostics. Secrets never logged.
 from __future__ import annotations
 
 import logging
+import os
+import platform
+import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -217,6 +221,85 @@ def structured_log(
     log_fn("%s | %s", message, extra)
 
 
+def is_termux() -> bool:
+    """Detect if running inside Termux on Android."""
+    prefix = os.environ.get("PREFIX", "")
+    return (
+        prefix.startswith("/data/data/com.termux")
+        or "com.termux" in prefix
+        or os.path.exists("/data/data/com.termux")
+    )
+
+
+def is_android() -> bool:
+    """Detect if running on an Android OS environment."""
+    if getattr(sys, "platform", "") == "android":
+        return True
+    if is_termux():
+        return True
+    if any(
+        os.environ.get(k)
+        for k in ("ANDROID_ARGUMENT", "ANDROID_ROOT", "ANDROID_DATA", "ANDROID_API_LEVEL")
+    ):
+        return True
+    if os.path.exists("/system/build.prop"):
+        return True
+    return False
+
+
+def get_android_api_level() -> Optional[int]:
+    """Detect Android API level if available."""
+    if hasattr(sys, "getandroidapilevel"):
+        try:
+            val = sys.getandroidapilevel()  # type: ignore[attr-defined]
+            if isinstance(val, int) and val > 0:
+                return val
+        except Exception:
+            pass
+
+    for env_var in ("ANDROID_API_LEVEL", "SL4A_API_LEVEL"):
+        env_val = os.environ.get(env_var, "").strip()
+        if env_val.isdigit():
+            return int(env_val)
+
+    try:
+        res = subprocess.run(
+            ["getprop", "ro.build.version.sdk"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if res.returncode == 0 and res.stdout.strip().isdigit():
+            return int(res.stdout.strip())
+    except Exception:
+        pass
+
+    if os.path.exists("/system/build.prop"):
+        try:
+            with open("/system/build.prop", "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    if line.startswith("ro.build.version.sdk="):
+                        val = line.split("=", 1)[1].strip()
+                        if val.isdigit():
+                            return int(val)
+        except Exception:
+            pass
+
+    return None
+
+
+def get_system_info() -> Dict[str, Any]:
+    """Gather environment and platform metadata."""
+    return {
+        "python_version": sys.version.split()[0],
+        "platform": platform.system(),
+        "arch": platform.machine(),
+        "is_android": is_android(),
+        "is_termux": is_termux(),
+        "android_api_level": get_android_api_level(),
+    }
+
+
 def health_payload(
     *,
     service: str = "yasin-agent",
@@ -234,6 +317,7 @@ def health_payload(
         "uptime_seconds": round(now - (started_at or now), 3),
         "ready": ready,
         "metrics": get_metrics().snapshot(),
+        "system": get_system_info(),
     }
 
 
@@ -292,4 +376,8 @@ __all__ = [
     "structured_log",
     "health_payload",
     "install_runtime_metrics",
+    "is_termux",
+    "is_android",
+    "get_android_api_level",
+    "get_system_info",
 ]

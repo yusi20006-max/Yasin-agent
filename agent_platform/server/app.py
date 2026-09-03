@@ -43,6 +43,7 @@ from agent_platform.security import (
 from agent_platform.observability import (
     execution_diagnostics,
     get_metrics,
+    get_system_info,
     health_payload,
     install_runtime_metrics,
 )
@@ -240,6 +241,7 @@ def create_app(
             "status": "ready",
             "service": "yasin-agent",
             "ready": True,
+            "system": get_system_info(),
         }
         return JSONResponse(content=payload, headers={"X-Request-Id": request_id})
 
