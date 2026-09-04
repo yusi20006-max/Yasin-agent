@@ -11,6 +11,8 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
+from agent_platform.hub_contract import CONTRACT_VERSION, HEADER_CONTRACT, HEADER_REQUEST_ID, HEADER_IDEMPOTENCY
+
 
 class HubAgentError(Exception):
     def __init__(self, status_code: int, detail: Any, request_id: Optional[str] = None) -> None:
@@ -57,10 +59,11 @@ class HubAgentClient:
     ) -> Dict[str, str]:
         h = {
             "Authorization": f"Bearer {self.token}",
-            "X-Request-Id": request_id or f"hub-{uuid.uuid4().hex[:12]}",
+            HEADER_REQUEST_ID: request_id or f"hub-{uuid.uuid4().hex[:12]}",
+            HEADER_CONTRACT: CONTRACT_VERSION,
         }
         if idempotency_key:
-            h["Idempotency-Key"] = idempotency_key
+            h[HEADER_IDEMPOTENCY] = idempotency_key
         return h
 
     def _request(
@@ -148,7 +151,6 @@ class HubAgentClient:
         return self._request("GET", f"/v1/executions/{execution_id}")
 
     def list_executions(self, **params: Any) -> Dict[str, Any]:
-        # query params left to caller via path if needed; keep simple
         return self._request("GET", "/v1/executions")
 
     def list_events(self, execution_id: Optional[str] = None) -> Dict[str, Any]:

@@ -47,6 +47,7 @@ from agent_platform.observability import (
     health_payload,
     install_runtime_metrics,
 )
+from agent_platform.hub_contract import CONTRACT_VERSION, HEADER_CONTRACT
 
 try:
     from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, Response
@@ -223,27 +224,63 @@ def create_app(
             response.headers["X-Request-Id"] = rid
         return response
 
+    def _runtime_ready() -> tuple[bool, str]:
+        """Observable readiness: runtime must exist and accept list()/inspection."""
+        if rt is None:
+            return False, "runtime missing"
+        try:
+            if hasattr(rt, "list_executions"):
+                rt.list_executions()
+            elif hasattr(rt, "list"):
+                rt.list()
+            elif hasattr(rt, "_executions"):
+                with rt._lock:
+                    _ = len(rt._executions)
+            else:
+                return False, "runtime unusable"
+        except Exception as exc:
+            return False, f"runtime error: {exc}"
+        return True, "ok"
+
     @app.get("/v1/health")
     def health(request_id: str = Depends(_auth)) -> JSONResponse:
-        with rt._lock:
-            count = len(rt._executions)
+        ready_ok, reason = _runtime_ready()
+        count = 0
+        if ready_ok and hasattr(rt, "_executions"):
+            with rt._lock:
+                count = len(rt._executions)
+        elif ready_ok and hasattr(rt, "list_executions"):
+            try:
+                count = len(rt.list_executions())
+            except Exception:
+                count = 0
         payload = health_payload(
             executions=count,
             started_at=app.state.started_at,
-            ready=True,
+            ready=ready_ok,
         )
-        return JSONResponse(content=payload, headers={"X-Request-Id": request_id})
+        payload["contract_version"] = CONTRACT_VERSION
+        if not ready_ok:
+            payload["reason"] = reason
+        headers = {"X-Request-Id": request_id, HEADER_CONTRACT: CONTRACT_VERSION}
+        return JSONResponse(content=payload, headers=headers)
 
     @app.get("/v1/ready")
     def ready(request_id: str = Depends(_auth)) -> JSONResponse:
-        """Readiness: process is up and runtime is usable."""
+        """Readiness: process is up and runtime is usable (not always true)."""
+        ready_ok, reason = _runtime_ready()
         payload = {
-            "status": "ready",
+            "status": "ready" if ready_ok else "not_ready",
             "service": "yasin-agent",
-            "ready": True,
+            "ready": ready_ok,
+            "contract_version": CONTRACT_VERSION,
             "system": get_system_info(),
         }
-        return JSONResponse(content=payload, headers={"X-Request-Id": request_id})
+        if not ready_ok:
+            payload["reason"] = reason
+        headers = {"X-Request-Id": request_id, HEADER_CONTRACT: CONTRACT_VERSION}
+        status = 200 if ready_ok else 503
+        return JSONResponse(content=payload, status_code=status, headers=headers)
 
     @app.get("/v1/metrics")
     def metrics_endpoint(request_id: str = Depends(_auth)) -> JSONResponse:
