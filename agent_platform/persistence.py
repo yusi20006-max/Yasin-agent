@@ -123,6 +123,12 @@ class JsonFileExecutionStore(ExecutionStore):
 
     def list_ids(self) -> List[str]:
         with self._lock:
+            # Drop interrupted write temps so recovery never treats them as records.
+            for tmp in self.root.glob("*.json.tmp"):
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
             ids: List[str] = []
             for path in self.root.glob("*.json"):
                 try:
