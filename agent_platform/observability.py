@@ -249,6 +249,17 @@ def is_android() -> bool:
 
 def get_android_api_level() -> Optional[int]:
     """Detect Android API level if available."""
+    for env_var in ("ANDROID_API_LEVEL", "SL4A_API_LEVEL"):
+        env_val = os.environ.get(env_var, "").strip()
+        if env_val.isdigit():
+            return int(env_val)
+
+    # Some Termux Python builds expose sys.getandroidapilevel(), but may
+    # report a stale/incorrect value. Only trust Android-specific runtime
+    # detection after explicit environment overrides have been checked.
+    if not is_android():
+        return None
+
     if hasattr(sys, "getandroidapilevel"):
         try:
             val = sys.getandroidapilevel()  # type: ignore[attr-defined]
@@ -256,11 +267,6 @@ def get_android_api_level() -> Optional[int]:
                 return val
         except Exception:
             pass
-
-    for env_var in ("ANDROID_API_LEVEL", "SL4A_API_LEVEL"):
-        env_val = os.environ.get(env_var, "").strip()
-        if env_val.isdigit():
-            return int(env_val)
 
     try:
         res = subprocess.run(
