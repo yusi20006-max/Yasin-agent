@@ -307,10 +307,41 @@ def create_app(
         request_id: str = Depends(_auth),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> JSONResponse:
-        """Create an execution via ExecutionRuntime.create()."""
+        """Create an execution via ExecutionRuntime.create().
+
+        When Idempotency-Key is present, the cache check, create, and cache
+        write run under a single lock so concurrent retries cannot double-create.
+        """
         path = "/v1/executions"
-        if idempotency_key:
-            cache_key = ("POST", path, idempotency_key)
+        cache_key = ("POST", path, idempotency_key) if idempotency_key else None
+
+        def _do_create() -> tuple[int, Dict[str, Any]]:
+            try:
+                task_id = validate_identifier(body.get("task_id"), name="task_id")
+                session_id = validate_optional_identifier(body.get("session_id"), name="session_id")
+                agent_id = validate_optional_identifier(body.get("agent_id"), name="agent_id")
+                execution_id = validate_optional_identifier(body.get("execution_id"), name="execution_id")
+                capabilities = validate_capabilities(body.get("capabilities"))
+                metadata = sanitize_metadata(body.get("metadata"))
+            except SecurityError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            start = bool(body.get("start", False))
+            try:
+                rec = rt.create(
+                    task_id=task_id,
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    capabilities=capabilities,
+                    metadata=metadata,
+                    execution_id=execution_id,
+                )
+                if start:
+                    rec = rt.start(rec.execution_id)
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            return 201, _record_dict(rec)
+
+        if cache_key is not None:
             with app.state.idem_lock:
                 if cache_key in app.state.idempotency:
                     status, payload = app.state.idempotency[cache_key]
@@ -319,35 +350,17 @@ def create_app(
                         content=payload,
                         headers={"X-Request-Id": request_id},
                     )
-        try:
-            task_id = validate_identifier(body.get("task_id"), name="task_id")
-            session_id = validate_optional_identifier(body.get("session_id"), name="session_id")
-            agent_id = validate_optional_identifier(body.get("agent_id"), name="agent_id")
-            execution_id = validate_optional_identifier(body.get("execution_id"), name="execution_id")
-            capabilities = validate_capabilities(body.get("capabilities"))
-            metadata = sanitize_metadata(body.get("metadata"))
-        except SecurityError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        start = bool(body.get("start", False))
-        try:
-            rec = rt.create(
-                task_id=task_id,
-                session_id=session_id,
-                agent_id=agent_id,
-                capabilities=capabilities,
-                metadata=metadata,
-                execution_id=execution_id,
-            )
-            if start:
-                rec = rt.start(rec.execution_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        payload = _record_dict(rec)
-        if idempotency_key:
-            with app.state.idem_lock:
-                app.state.idempotency[("POST", path, idempotency_key)] = (201, payload)
+                status, payload = _do_create()
+                app.state.idempotency[cache_key] = (status, payload)
+                return JSONResponse(
+                    status_code=status,
+                    content=payload,
+                    headers={"X-Request-Id": request_id},
+                )
+
+        status, payload = _do_create()
         return JSONResponse(
-            status_code=201,
+            status_code=status,
             content=payload,
             headers={"X-Request-Id": request_id},
         )
